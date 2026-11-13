@@ -1,16 +1,21 @@
-//! Windows PCM playback only. The offline renderer is not linked into gameplay.
+//! Windows PCM playback. Other platforms run the prototype in silence.
 use super::*;
+#[cfg(windows)]
 #[link(name = "winmm")]
 unsafe extern "system" {
     fn PlaySoundW(sound: *const u16, module: *mut std::ffi::c_void, flags: u32) -> i32;
 }
 #[derive(Resource)]
 pub(super) struct Music {
+    #[cfg(windows)]
     pub silent: bool,
+    #[cfg(windows)]
     pub base: PathBuf,
+    #[cfg(windows)]
     current: Option<String>,
 }
 impl Music {
+    #[cfg(windows)]
     pub fn new(base: PathBuf, silent: bool) -> Self {
         Self {
             silent,
@@ -18,6 +23,11 @@ impl Music {
             current: None,
         }
     }
+    #[cfg(not(windows))]
+    pub fn new(_: PathBuf, _: bool) -> Self {
+        Self {}
+    }
+    #[cfg(windows)]
     pub fn stop(&mut self) {
         unsafe {
             PlaySoundW(std::ptr::null(), std::ptr::null_mut(), 0);
@@ -25,11 +35,13 @@ impl Music {
         self.current = None;
     }
 }
+#[cfg(windows)]
 impl Drop for Music {
     fn drop(&mut self) {
         self.stop();
     }
 }
+#[cfg(windows)]
 pub(super) fn update(
     s: Res<Simulation>,
     p: Res<Preferences>,
@@ -66,3 +78,5 @@ pub(super) fn update(
         music.current = Some(theme.into());
     }
 }
+#[cfg(not(windows))]
+pub(super) fn update() {}

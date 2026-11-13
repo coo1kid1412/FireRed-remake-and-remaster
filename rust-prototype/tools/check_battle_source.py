@@ -10,8 +10,8 @@ import hashlib
 import json
 import re
 import subprocess
-import os
 from pathlib import Path
+from host_tools import CC, ENV
 
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / 'reference/pokefirered'
@@ -233,9 +233,8 @@ int main(void) {{
 main = main.replace('attack=1;', 'attack=5;').replace('defense=1;', 'defense=5;')
 source = '\n'.join([prefix,defines,'static u8 GetLevelFromMonExp(struct Pokemon *mon){return mon->data[MON_DATA_LEVEL];}',nature_table,calc_macro,stat_functions,ratios,accuracy_ratios,apply_macro,damage,stubs,prototypes,table,discouraged,functions,checks,main])
 (OUT / 'oracle.c').write_text(source)
-env = dict(os.environ); env['PATH'] = 'C:/msys64/mingw64/bin;' + env['PATH']
-subprocess.run(['C:/msys64/mingw64/bin/gcc.exe','-std=c17','-O2',str(OUT/'oracle.c'),'-o',str(OUT/'oracle.exe')], check=True, env=env)
-result = subprocess.run([str(OUT/'oracle.exe')],check=True,capture_output=True,text=True,env=env)
+subprocess.run([CC,'-std=c17','-O2',str(OUT/'oracle.c'),'-o',str(OUT/'oracle.exe')], check=True, env=ENV)
+result = subprocess.run([str(OUT/'oracle.exe')],check=True,capture_output=True,text=True,env=ENV)
 vectors = json.loads(result.stdout)
 vectors['scope'] = 'Original C AI handlers/selection/processing, physical damage branch, accuracy/critical commands and stat calculation; bounded fixture, not complete-ROM timing parity'
 vectors['source_sha256'] = {name: hashlib.sha256((REF/name).read_bytes()).hexdigest() for name in ['src/pokemon.c','src/battle_ai_script_commands.c','src/random.c','src/battle_script_commands.c']}

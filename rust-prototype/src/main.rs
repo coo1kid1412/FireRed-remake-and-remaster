@@ -80,7 +80,7 @@ impl Preferences {
             native_state: ini.contains("native_state=1"),
             battle_slice: !ini.contains("battle_slice=0"),
             source_art: !ini.contains("source_textures=0"),
-            music: ini.contains("music=1"),
+            music: cfg!(windows) && ini.contains("music=1"),
             free_move: !ini.contains("free_movement=0"),
             diagonal: !ini.contains("diagonal_movement=0"),
             third_person: !ini.contains("third_person=0"),
@@ -115,6 +115,12 @@ impl Preferences {
             eprintln!("Cannot save prototype settings: {e}");
         }
     }
+}
+#[derive(Resource)]
+struct AssetRoot {
+    path: PathBuf,
+    textures: bool,
+    letsgo_shader: bool,
 }
 #[derive(Resource)]
 struct Capture {
@@ -152,7 +158,12 @@ fn main() {
     let asset_root = if base.join("assets").is_dir() {
         base.join("assets")
     } else {
-        PathBuf::from("assets")
+        std::env::current_dir().unwrap().join("assets")
+    };
+    let assets = AssetRoot {
+        textures: asset_root.join("textures").is_dir(),
+        letsgo_shader: asset_root.join("shaders/letsgo_field.wgsl").is_file(),
+        path: asset_root.clone(),
     };
     if args.iter().any(|v| v == "--check") {
         persistence::check_world(&world, &base).expect("Native field startup/integration");
@@ -243,6 +254,7 @@ fn main() {
         game.facing = Cell(1, -1);
     }
     let mut prefs = Preferences::load(base.join("config.ini"));
+    prefs.letsgo_shading &= assets.letsgo_shader;
     if field_smoke || field_dialogue || args.iter().any(|a| a == "--field-scripts") {
         prefs.field_scripts = true;
     }
@@ -309,6 +321,7 @@ fn main() {
     if args.iter().any(|a| a == "--plain-art") {
         prefs.source_art = false;
     }
+    prefs.source_art &= assets.textures;
     prefs.menu = args.iter().any(|a| a == "--settings");
     if args.iter().any(|a| a == "--orbit") {
         prefs.angle = 2.2;
@@ -393,6 +406,7 @@ fn main() {
             asset_root.clone(),
             capture.is_some() || smoke || battle_smoke || field_smoke || scene_smoke,
         ))
+        .insert_resource(assets)
         .insert_resource(prefs)
         .insert_resource(bot)
         .insert_resource(Capture {
@@ -492,6 +506,7 @@ fn main() {
 }
 fn input(
     keys: Res<ButtonInput<KeyCode>>,
+    assets: Res<AssetRoot>,
     mut s: ResMut<Simulation>,
     mut p: ResMut<Preferences>,
     time: Res<Time>,
@@ -598,12 +613,12 @@ fn input(
             p.free_move = !p.free_move;
             p.save();
         }
-        if keys.just_pressed(KeyCode::Digit6) {
+        if assets.textures && keys.just_pressed(KeyCode::Digit6) {
             p.source_art = !p.source_art;
             s.dirty = true;
             p.save();
         }
-        if keys.just_pressed(KeyCode::Digit7) {
+        if cfg!(windows) && keys.just_pressed(KeyCode::Digit7) {
             p.music = !p.music;
             p.save();
         }
@@ -649,7 +664,7 @@ fn input(
             p.quick_start = !p.quick_start;
             p.save();
         }
-        if keys.just_pressed(KeyCode::KeyH) {
+        if assets.letsgo_shader && keys.just_pressed(KeyCode::KeyH) {
             p.letsgo_shading = !p.letsgo_shading;
             p.save();
         }
@@ -781,7 +796,7 @@ fn hud(
             if p.diagonal { "ON" } else { "OFF" },
             if p.free_move { "ON" } else { "OFF" },
             if p.source_art { "ON" } else { "OFF" },
-            if p.music { "ON" } else { "OFF" },
+            if !cfg!(windows) { "Unavailable" } else if p.music { "ON" } else { "OFF" },
             if p.battle_slice { "ON" } else { "OFF" },
             if p.native_state { "ON" } else { "OFF" },
             if p.field_scripts { "ON" } else { "OFF" },

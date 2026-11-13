@@ -71,7 +71,7 @@ PC management/withdrawal, Pokédex screens, remaining field step counters and th
 new encounter behavior is UNVERIFIED against original C/frame timing. Headless
 library checks and packaged --check exercise the native walking/Repel bridge.
 
-A separate Windows Rust/Bevy application. Pallet Town, Route 1, the player's
+A separate Rust/Bevy application. Pallet Town, Route 1, the player's
 house (both floors), rival's house and Oak's lab use imported FireRed map data.
 The packaged game runs native Rust simulation, with no guest CPU, ROM or C++ runtime.
 It does not touch the installed remaster's saves, configuration or executable.
@@ -320,6 +320,48 @@ Installed C++ executable/config still match their preservation hashes.
 
 ## Build and validate
 
+### Intel macOS
+
+Install Xcode Command Line Tools, Python 3.10+, and the stable Intel Rust
+toolchain via rustup. From this directory run:
+
+`./build-macos.sh`
+
+The script checks out the pinned reference in `reference/pokefirered`, generates
+local JSON, runs the core integration check and library tests, and builds a native
+`x86_64-apple-darwin` executable. If a FireRed USA rev0 ROM is available at
+`../FireRedLeafGreenRecomp/variants/firered/roms/firered_usa.gba`, the map
+importer checks its cells and encounter attributes against it. Otherwise it
+imports from the pinned source and records that no ROM comparison was made.
+
+Run from this directory:
+
+```sh
+WGPU_ADAPTER_NAME="Radeon Pro 5300M" \
+  ./target/x86_64-apple-darwin/debug/firered-native-prototype --field-scripts
+```
+
+Omit `WGPU_ADAPTER_NAME` to use the default GPU. With no imported art, the
+prototype uses block scenery and its built-in palette. Music playback is disabled
+on macOS. The Windows asset-validation command `--check` also checks for a full
+set of imported textures, sprites, and WAVs.
+
+To add the Let's Go visuals, point the importers at your own extracted Let's Go
+RomFS directory. They require NumPy, Pillow, and texture2ddecoder. Run the field
+import before the kit import so the kit can reuse the converted textures:
+
+```sh
+python3 tools/letsgo/import_letsgo_field.py "$LETSGO_ROMFS" assets/letsgo
+python3 tools/letsgo/import_letsgo_kit.py "$LETSGO_ROMFS" assets/letsgo
+python3 tools/letsgo/import_letsgo_trainers.py "$LETSGO_ROMFS"
+python3 tools/letsgo/import_letsgo_pokemon.py "$LETSGO_ROMFS"
+```
+
+Imported models use Bevy's standard materials when the optional
+`assets/shaders/letsgo_field.wgsl` shader is absent.
+
+### Windows
+
 `powershell -ExecutionPolicy Bypass -File tools/setup.ps1` installs an isolated
 toolchain on first use. `build.bat` runs headless library tests, builds and packages
 an optimized development EXE and required MinGW DLLs. `build.bat -Release` uses
@@ -334,7 +376,7 @@ simulation, so it is an integration check, not an independent parity oracle.
 
 To reproduce imports, run tools/fetch-reference.ps1, then run tools/import_world.py
 with Python 3. The importer needs the existing local ROM and symbol table for
-verification; normal builds and gameplay use checked-in JSON and need neither.
+verification. The public checkout omits the generated JSON and imported assets.
 reference/ is an ignored sparse checkout. Do not edit generated JSON to change
 source behavior without also updating the importer and provenance.
 

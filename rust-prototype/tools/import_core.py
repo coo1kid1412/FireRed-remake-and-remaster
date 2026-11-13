@@ -1,11 +1,11 @@
 """Import complete core tables from the pinned source; never link C at runtime."""
 import hashlib
 import json
-import os
 import re
 import subprocess
 import tempfile
 from pathlib import Path
+from host_tools import CC, ENV
 
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / 'reference/pokefirered'
@@ -25,9 +25,8 @@ for h in headers:
     read('include/constants/' + h + '.h')
 
 def cpp(text):
-    env = dict(os.environ, PATH='C:/msys64/mingw64/bin;' + os.environ['PATH'])
-    return subprocess.check_output(['C:/msys64/mingw64/bin/gcc.exe', '-E', '-P', '-x', 'c',
-        '-I', str(REF / 'include'), '-'], input=prefix + text, text=True, env=env)
+    return subprocess.check_output([CC, '-E', '-P', '-x', 'c',
+        '-I', str(REF / 'include'), '-'], input=prefix + text, text=True, env=ENV)
 
 def entries(text):
     result = []
@@ -76,10 +75,9 @@ authoring += '\nint main(void) {\n' + '\n'.join(
 authoring += '\nfor (int g=0;g<6;g++) for (int n=0;n<=100;n++) printf("EXP %d %d %u\\n",g,n,gExperienceTables[g][n]);\nreturn 0; }\n'
 with tempfile.TemporaryDirectory(dir=ROOT/'tools', prefix='core-import-') as temp:
     exe = Path(temp)/'tables.exe'
-    env = dict(os.environ, PATH='C:/msys64/mingw64/bin;' + os.environ['PATH'])
-    subprocess.run(['C:/msys64/mingw64/bin/gcc.exe', '-x', 'c', '-I', str(REF/'include'),
-        '-', '-o', str(exe)], input=authoring, text=True, env=env, check=True)
-    resolved = subprocess.check_output([str(exe)], text=True, env=env)
+    subprocess.run([CC, '-x', 'c', '-I', str(REF/'include'),
+        '-', '-o', str(exe)], input=authoring, text=True, env=ENV, check=True)
+    resolved = subprocess.check_output([str(exe)], text=True, env=ENV)
 ids = {name: int(value) for name, value in re.findall(r'^ID (\w+) (\d+)$', resolved, re.M)}
 for sid, name in pointer_pairs:
     if sid in species and name in sets:

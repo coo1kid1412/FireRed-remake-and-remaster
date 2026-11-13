@@ -103,10 +103,14 @@ pub(super) fn swap(
     standard: Res<Assets<StandardMaterial>>,
     mut field: ResMut<Assets<FieldMaterial>>,
     server: Res<AssetServer>,
+    root: Res<AssetRoot>,
     p: Res<Preferences>,
     mut lg_images: ResMut<LgImages>,
     mut cache: Local<HashMap<AssetId<StandardMaterial>, (Handle<FieldMaterial>, u32)>>,
 ) {
+    if !root.letsgo_shader {
+        return;
+    }
     for (entity, material, extras) in &meshes {
         if let Some((handle, kind)) = cache.get(&material.0.id()) {
             c.entity(entity).remove::<MeshMaterial3d<StandardMaterial>>().insert((MeshMaterial3d(handle.clone()), LgSeen));

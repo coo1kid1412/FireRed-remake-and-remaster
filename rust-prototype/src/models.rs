@@ -36,6 +36,11 @@ struct Model {
 }
 #[derive(Resource)]
 pub(super) struct Catalog(HashMap<String, Model>);
+impl Catalog {
+    pub(super) fn contains(&self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
+}
 /// Let's Go field scenery per slice map id, imported locally by tools/letsgo/import_letsgo_field.py.
 /// Absent manifest = no scenery; the FireRed block scenery is used instead.
 #[derive(Resource, Default)]
@@ -80,15 +85,13 @@ impl Scenery {
 pub(super) struct Kit {
     pub ready: bool,
 }
-fn load_scenery(server: &AssetServer) -> Scenery {
-    let base = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("assets")));
-    let path = base.filter(|b| b.is_dir()).unwrap_or_else(|| "assets".into()).join("letsgo/scenery.json");
+fn load_scenery(server: &AssetServer, root: &std::path::Path) -> Scenery {
+    let path = root.join("letsgo/scenery.json");
     let Ok(text) = std::fs::read_to_string(&path) else { return Scenery::default() };
     let manifest: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => { eprintln!("Let's Go scenery manifest error: {e}"); return Scenery::default() }
     };
-    let root = path.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_default();
     let mut out = Scenery::default();
     for (map, entry) in manifest.as_object().into_iter().flatten() {
         let scenes = entry["scenes"].as_array().into_iter().flatten()
@@ -166,11 +169,17 @@ pub(super) fn spawn(c: &mut Commands, catalog: &Catalog, key: &str, role: Role, 
 pub(super) fn setup(
     mut c: Commands,
     server: Res<AssetServer>,
+    root: Res<AssetRoot>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let manifest: Vec<serde_json::Value> = serde_json::from_str(include_str!("../assets/models/slice-models.json")).expect("Slice model manifest");
+    let manifest: Vec<serde_json::Value> =
+        match std::fs::read_to_string(root.path.join("models/slice-models.json")) {
+            Ok(text) => serde_json::from_str(&text).expect("Invalid slice model manifest"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => panic!("Cannot read slice model manifest: {e}"),
+        };
     let mut catalog = Catalog(HashMap::new());
     for entry in manifest {
         let key = entry["key"].as_str().unwrap();
@@ -187,8 +196,11 @@ pub(super) fn setup(
     }
     let args: Vec<String> = std::env::args().collect();
     let key = args.iter().position(|a| a == "--model-key").and_then(|i| args.get(i + 1)).map_or("red", String::as_str);
-    assert!(catalog.0.contains_key(key), "Unknown preview model {key}");
-    spawn(&mut c, &catalog, key, Role::Player, Vec3::ZERO);
+    if catalog.contains(key) {
+        spawn(&mut c, &catalog, key, Role::Player, Vec3::ZERO);
+    } else if args.iter().any(|arg| arg == "--model-key") {
+        panic!("Unknown preview model {key}");
+    }
     c.insert_resource(AnimationPreview(if args.iter().any(|a| a == "--model-walk") { Some(1) }
         else if args.iter().any(|a| a == "--model-run") { Some(2) } else { None }));
     let previews = Previews { images: std::array::from_fn(|_| images.add(Image::new_target_texture(512, 512, TextureFormat::Rgba8UnormSrgb))) };
@@ -214,9 +226,8 @@ pub(super) fn setup(
     }
     c.insert_resource(previews);
     c.insert_resource(catalog);
-    c.insert_resource(load_scenery(&server));
-    let base = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("assets")));
-    let kit = base.filter(|b| b.is_dir()).unwrap_or_else(|| "assets".into()).join("letsgo/kit/kit.json");
+    c.insert_resource(load_scenery(&server, &root.path));
+    let kit = root.path.join("letsgo/kit/kit.json");
     c.insert_resource(Kit { ready: kit.exists() });
 }
 fn preview_origin(index: usize) -> Vec3 {

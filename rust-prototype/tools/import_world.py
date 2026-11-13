@@ -1,5 +1,10 @@
 """Reproducible, local import from a pinned pret checkout. Never executes guest code."""
-import hashlib, json, pathlib, re, struct, subprocess
+import argparse, hashlib, json, pathlib, re, struct, subprocess
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--source-only', action='store_true',
+    help='Import the pinned source maps without verifying against a local ROM.')
+args = parser.parse_args()
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REF = ROOT / 'reference/pokefirered'
@@ -520,27 +525,35 @@ for m in maps:
 
 # Independently compare all imported map cells and used behavior attributes against Ben's local rev0 ROM.
 project=ROOT.parent;rom_path=project/'FireRedLeafGreenRecomp/variants/firered/roms/firered_usa.gba'
-rom=rom_path.read_bytes();assert hashlib.sha1(rom).hexdigest()=='41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc'
-symbols={}
-for line in (project/'FireRedLeafGreenRecomp/variants/firered/symbols/all_symbols.tsv').read_text().splitlines():
-    f=line.split('\t')
-    if len(f)>=6 and not line.startswith('#'):symbols[f[5]]=int(f[0],16)-0x08000000
-def u32(offset):return struct.unpack_from('<I',rom,offset)[0]
-for m in maps:
-    layout_name = layouts[originals[m['id']]['layout']]['name']
-    offset = symbols[layout_name]
-    w,h,_,ptr,prim,sec = struct.unpack_from('<6I',rom,offset)
-    assert [w,h]==[len(m['tiles'][0]),len(m['tiles'])]
-    assert list(struct.unpack_from(f'<{w*h}H',rom,ptr-0x08000000))==m['cells'],m['id']+' map mismatch'
-    for i,word in enumerate(m['cells']):
-        mid=word&1023;ts=(prim if mid<640 else sec)-0x08000000;idx=mid if mid<640 else mid-640
-        attr=u32(ts+20)-0x08000000
-        val=u32(attr+idx*4)
-        assert val&511==m['behaviors'][i],m['id']+' behavior mismatch'
-        assert (val>>24)&7==m['encounter_types'][i],m['id']+' encounter type mismatch'
+rom_sha1 = None
+rom_verified_maps = []
+if not args.source_only:
+    rom=rom_path.read_bytes()
+    rom_sha1=hashlib.sha1(rom).hexdigest()
+    assert rom_sha1=='41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc'
+    symbols={}
+    for line in (project/'FireRedLeafGreenRecomp/variants/firered/symbols/all_symbols.tsv').read_text().splitlines():
+        f=line.split('\t')
+        if len(f)>=6 and not line.startswith('#'):symbols[f[5]]=int(f[0],16)-0x08000000
+    def u32(offset):return struct.unpack_from('<I',rom,offset)[0]
+    for m in maps:
+        layout_name = layouts[originals[m['id']]['layout']]['name']
+        offset = symbols[layout_name]
+        w,h,_,ptr,prim,sec = struct.unpack_from('<6I',rom,offset)
+        assert [w,h]==[len(m['tiles'][0]),len(m['tiles'])]
+        assert list(struct.unpack_from(f'<{w*h}H',rom,ptr-0x08000000))==m['cells'],m['id']+' map mismatch'
+        for i,word in enumerate(m['cells']):
+            mid=word&1023;ts=(prim if mid<640 else sec)-0x08000000;idx=mid if mid<640 else mid-640
+            attr=u32(ts+20)-0x08000000
+            val=u32(attr+idx*4)
+            assert val&511==m['behaviors'][i],m['id']+' behavior mismatch'
+            assert (val>>24)&7==m['encounter_types'][i],m['id']+' encounter type mismatch'
+        rom_verified_maps.append(m['id'])
 
 (ROOT/'data/world.json').write_text(json.dumps(dict(maps=maps),ensure_ascii=False,indent=2),encoding='utf-8')
-(ROOT/'data/provenance.json').write_text(json.dumps(dict(repository='https://github.com/pret/pokefirered',revision=REV,
-    rom_sha1=hashlib.sha1(rom).hexdigest(),rom_verified_maps=[m['id'] for m in maps],source_hashes=source_hashes,
+report = 'world-import-report.json' if args.source_only else 'provenance.json'
+(ROOT/'data'/report).write_text(json.dumps(dict(repository='https://github.com/pret/pokefirered',revision=REV,
+    rom_sha1=rom_sha1,rom_verified_maps=rom_verified_maps,source_hashes=source_hashes,
     checkpoint='Post-intro exploration; running shoes granted; sign-lady scene complete. Static NPC snapshots; scripted progression and battles not yet ported.'),indent=2))
-print('Imported and ROM-verified',len(maps),'maps;',sum(len(m['cells']) for m in maps),'original cells')
+print('Imported',len(maps),'maps;',sum(len(m['cells']) for m in maps),'original cells;',
+      len(rom_verified_maps),'maps verified against ROM')

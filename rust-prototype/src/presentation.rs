@@ -104,6 +104,7 @@ pub(super) fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     server: Res<AssetServer>,
+    assets: Res<AssetRoot>,
     simulation: Res<Simulation>,
 ) {
     let mut palette = [
@@ -140,51 +141,40 @@ pub(super) fn setup(
     } else {
         PathBuf::from("data/art.json")
     };
-    let source: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(art_path).expect("Original palette missing"))
-            .expect("Invalid art palette");
-    let color = |key: &str, index: usize| {
-        let v = &source[key][index];
-        (
-            v[0].as_u64().unwrap() as u8,
-            v[1].as_u64().unwrap() as u8,
-            v[2].as_u64().unwrap() as u8,
-        )
-    };
-    for (target, index) in [
-        (SKIN, 2),
-        (RED, 12),
-        (WHITE, 9),
-        (BLUE, 5),
-        (GOLD, 13),
-        (DARK, 6),
-    ] {
-        palette[target] = color("red_palette", index);
+    if art_path.is_file() {
+        let source: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(art_path).expect("Cannot read original palette"))
+                .expect("Invalid art palette");
+        let color = |key: &str, index: usize| {
+            let v = &source[key][index];
+            (
+                v[0].as_u64().unwrap() as u8,
+                v[1].as_u64().unwrap() as u8,
+                v[2].as_u64().unwrap() as u8,
+            )
+        };
+        for (target, index) in [(SKIN, 2), (RED, 12), (WHITE, 9), (BLUE, 5), (GOLD, 13), (DARK, 6)] {
+            palette[target] = color("red_palette", index);
+        }
+        palette[LEAF] = color("tree_palette", 2);
+        palette[LEAF_LIGHT] = color("tree_palette", 1);
+        palette[BARK] = color("tree_palette", 5);
     }
-    palette[LEAF] = color("tree_palette", 2);
-    palette[LEAF_LIGHT] = color("tree_palette", 1);
-    palette[BARK] = color("tree_palette", 5);
     let mut textures = HashMap::new();
-    for name in simulation
-        .world
-        .maps
-        .iter()
-        .map(|m| format!("{}_ground", m.id))
-        .chain(
-            ["roof", "wall", "lab_roof", "lab_wall", "window", "door"]
-                .into_iter()
-                .map(str::to_string),
-        )
-    {
-        textures.insert(
-            name.clone(),
-            materials.add(StandardMaterial {
-                base_color_texture: Some(server.load(format!("textures/{name}.png"))),
-                perceptual_roughness: 1.,
-                reflectance: 0.,
-                ..default()
-            }),
-        );
+    if assets.textures {
+        for name in simulation.world.maps.iter().map(|m| format!("{}_ground", m.id)).chain(
+            ["roof", "wall", "lab_roof", "lab_wall", "window", "door"].into_iter().map(str::to_string),
+        ) {
+            textures.insert(
+                name.clone(),
+                materials.add(StandardMaterial {
+                    base_color_texture: Some(server.load(format!("textures/{name}.png"))),
+                    perceptual_roughness: 1.,
+                    reflectance: 0.,
+                    ..default()
+                }),
+            );
+        }
     }
     let colors = palette
         .iter()
@@ -198,8 +188,9 @@ pub(super) fn setup(
         })
         .collect();
     let linear = |s: &mut bevy::image::ImageLoaderSettings| s.sampler = bevy::image::ImageSampler::linear();
+    let has_kit = assets.path.join("letsgo/kit/kit.json").is_file();
     let kit_material = |path: &str, materials: &mut Assets<StandardMaterial>| materials.add(StandardMaterial {
-        base_color_texture: Some(server.load_with_settings(path.to_owned(), linear)),
+        base_color_texture: has_kit.then(|| server.load_with_settings(path.to_owned(), linear)),
         perceptual_roughness: 1.,
         reflectance: 0.,
         ..default()
@@ -208,7 +199,13 @@ pub(super) fn setup(
     let kit_path = kit_material("letsgo/kit/soil01_com.png", &mut materials);
     let kit_cliff = kit_material("letsgo/kit/cliff01_com.png", &mut materials);
     let kit_stone = kit_material("letsgo/kit/rock01_com.png", &mut materials);
-    let scene = |p: &str| server.load(GltfAssetLabel::Scene(0).from_asset(p.to_owned()));
+    let scene = |p: &str| {
+        if has_kit {
+            server.load(GltfAssetLabel::Scene(0).from_asset(p.to_owned()))
+        } else {
+            Handle::default()
+        }
+    };
     c.insert_resource(Art {
         cube: meshes.add(Cuboid::new(1., 1., 1.)),
         kit_grass,
@@ -1169,7 +1166,7 @@ pub(super) fn rebuild(
         if n.invisible {
             continue;
         }
-        let model = models::npc_key(&n.graphics).map(|key| {
+        let model = models::npc_key(&n.graphics).filter(|key| catalog.contains(key)).map(|key| {
             let entity = models::spawn(&mut c, &catalog, key, models::Role::Npc(n.local_id), cell_position(n.at) + Vec3::Y * (0.025 + scenery.ground(preferences.letsgo_scenery, &m.id, n.at.0 as f32, n.at.1 as f32)));
             c.entity(entity).insert(Geometry);
             entity

@@ -3,6 +3,21 @@
 Hand-off note between sessions and tools. Update it when something changes.
 Last updated: 2026-10-10 (separate Rust prototype; installed C++ game unchanged).
 
+## Intel macOS Rust prototype (2026-11-13)
+
+- `rust-prototype/build-macos.sh` imports the pinned FireRed source, checks the
+  core and builds `x86_64-apple-darwin`. The ROM is optional for the source
+  import and is required for an independent map comparison.
+- The core integration check and 73 library tests passed. Pallet Town rendered
+  with Metal on Radeon Pro 5300M. The clerk, actor-scene and rival-battle replays
+  passed on that GPU. The actor-scene replay wrote a passing report before
+  timing out on the first exit attempt and exited normally on a standalone retry.
+- The macOS LLVM field import emits the same number of command handlers as the
+  Windows reference report, with different byte, label and text counts. Whole
+  field-data parity with the Windows import has not been verified.
+- This check used block scenery and silence. Let's Go models require a local
+  RomFS import, and the original visuals have not been exercised on macOS.
+
 ## Let's Go Route 1 + Pokemon models (2026-10-10)
 
 - Route 1 renders Let's Go `area02/road001_00` (same area frame as Pallet, root shifted by the FireRed connection (0,-40)). `overlay` maps keep FireRed gameplay: Let's Go trees survive only on FireRed X tiles (155/206), Let's Go encounter grass + sign removed, and kit trees/grass/ledges dress FireRed features. `tools/letsgo/terrain.py` rasterises Let's Go ground into `assets/letsgo/<map>_height.json` (4 samples/tile, holes filled); player, NPCs, kit pieces and the camera floor stand on it (Route 1 rises ~3 tiles north). Camera boom now only stops on X tiles/buildings and rides over terrain.

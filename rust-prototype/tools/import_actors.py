@@ -1,6 +1,7 @@
 """Import pinned original object templates and coordinate event metadata."""
-import hashlib, json, re, subprocess, os
+import hashlib, json, re, subprocess
 from pathlib import Path
+from host_tools import CC, ENV
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT/'reference/pokefirered'
 REV = '037335f4c725d7c9aecdac87066f2002b4bd7e14'
@@ -26,7 +27,7 @@ headers = ['constants/flags.h','constants/vars.h','constants/event_object_moveme
 source = '\n'.join('#include "'+h+'"' for h in headers)+'\n'
 for h in headers: read('include/'+h)
 source += '\n'.join('NATIVE_VALUE_'+s+' '+s for s in symbols)
-process = subprocess.run(['C:/msys64/mingw64/bin/gcc.exe','-E','-P','-x','c','-I',str(REF/'include'),'-'],input=source,text=True,capture_output=True,env=dict(os.environ,PATH='C:/msys64/mingw64/bin;'+os.environ['PATH']))
+process = subprocess.run([CC,'-E','-P','-x','c','-I',str(REF/'include'),'-'],input=source,text=True,capture_output=True,env=ENV)
 if process.returncode: raise RuntimeError(process.stderr)
 pre = process.stdout
 values = {}

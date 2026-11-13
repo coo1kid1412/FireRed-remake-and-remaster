@@ -137,7 +137,7 @@ pub(super) enum Action {
     Close,
 }
 
-pub(super) fn setup(mut c: Commands, server: Res<AssetServer>) {
+pub(super) fn setup(mut c: Commands) {
     c.spawn((Panel,GlobalZIndex(200),Node {
         position_type:PositionType::Absolute,width:percent(100),height:percent(100),
         flex_direction:FlexDirection::Column,padding:UiRect::all(px(28)),row_gap:px(12),
@@ -147,9 +147,9 @@ pub(super) fn setup(mut c: Commands, server: Res<AssetServer>) {
         panel.spawn((Header,Text::new("FIRST RIVAL BATTLE  |  NATIVE RUST"),TextFont{font_size:28.,..default()},TextColor(Color::WHITE)));
         panel.spawn((Subtitle,Text::new("Original FireRed trainer AI and four opening moves. Fixed test starter and random seed."),TextFont{font_size:17.,..default()},TextColor(Color::srgb_u8(168,191,209))));
         panel.spawn(Node{width:percent(100),height:px(255),column_gap:px(24),..default()}).with_children(|row| {
-            for (index,name) in [(0,"charmander"),(1,"squirtle")] {
+            for index in 0..2 {
                 row.spawn((Node{width:percent(50),padding:UiRect::all(px(16)),column_gap:px(16),align_items:AlignItems::Center,..default()},BackgroundColor(Color::srgb_u8(31,48,61)))).with_children(|card| {
-                    card.spawn((MonImage(index),ImageNode::new(server.load(format!("battle/{name}.png"))),Node{width:px(192),height:px(192),..default()}));
+                    card.spawn((MonImage(index),ImageNode::default(),Node{width:px(192),height:px(192),..default()}));
                     card.spawn(Node{flex_direction:FlexDirection::Column,flex_grow:1.,row_gap:px(12),..default()}).with_children(|info| {
                         info.spawn((MonLabel(index),Text::new(""),TextFont{font_size:22.,..default()},TextColor(Color::WHITE)));
                         info.spawn((Node{width:percent(100),height:px(12),..default()},BackgroundColor(Color::srgb_u8(10,20,25)))).with_children(|track| {
@@ -258,6 +258,7 @@ pub(super) fn draw(
         ),
     >,
     server: Res<AssetServer>,
+    assets: Res<super::AssetRoot>,
     mut images: Query<(&MonImage, &mut ImageNode)>,
     previews: Res<super::models::Previews>,
     models: Query<&super::models::Character>,
@@ -301,7 +302,14 @@ pub(super) fn draw(
             let name = &screen.battle.mons[img.0].name;
             let image = if p.pokemon_models && super::models::preview_ready(&models, img.0, name) {
                 previews.images[img.0].clone()
-            } else { server.load(sprite_path(name, img.0 == 1)) };
+            } else {
+                let path = sprite_path(name, img.0 == 1);
+                if assets.path.join(&path).is_file() {
+                    server.load(path)
+                } else {
+                    Handle::default()
+                }
+            };
             if node.image != image { node.image = image; }
         }
     }

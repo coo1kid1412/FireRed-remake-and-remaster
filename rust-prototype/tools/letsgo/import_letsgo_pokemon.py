@@ -15,12 +15,12 @@ def main(romfs):
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     models = os.path.join(root, 'assets', 'models')
     path = os.path.join(models, 'slice-models.json')
-    manifest = json.load(open(path, encoding='utf8'))
-    for entry in manifest:
-        key = entry['key']
-        if key not in DEX:
-            continue
-        pack = os.path.join(romfs, 'bin', 'archive', 'pokemon', 'pm%04d_00.gfpak' % DEX[key])
+    os.makedirs(models, exist_ok=True)
+    manifest = json.load(open(path, encoding='utf8')) if os.path.isfile(path) else []
+    entries = {entry['key']: entry for entry in manifest}
+    for key, dex in DEX.items():
+        entry = entries.get(key, {'key': key, 'file': f'models/{key}/{key}.glb'})
+        pack = os.path.join(romfs, 'bin', 'archive', 'pokemon', 'pm%04d_00.gfpak' % dex)
         files = gfpak.read(pack)
         named = anim_names.resolve(files)
         p = lambda *k: anim_names.pick(named, *k)
@@ -38,6 +38,7 @@ def main(romfs):
         if missing:
             print(key, 'kept previous model, missing clips', missing, sorted(named)[:8]); continue
         dst = os.path.join(models, entry['file'].split('/', 1)[1])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         tmp = dst + '.new'
         info = char2glb.convert(pack, tmp, clips=clips, target_height=HEIGHT[key])
         keep = os.path.join(os.path.dirname(dst), 'source', key + '_previous.glb')
@@ -45,9 +46,11 @@ def main(romfs):
         if os.path.exists(dst) and not os.path.exists(keep):
             shutil.copy2(dst, keep)
         os.replace(tmp, dst)
-        entry.update(letsgo_pack='bin/archive/pokemon/pm%04d_00.gfpak' % DEX[key], clips=info['clips'],
+        entry.update(letsgo_pack='bin/archive/pokemon/pm%04d_00.gfpak' % dex, clips=info['clips'],
                      clip_speed=[info['native_speed'].get(c, 0) for c in ('Idle', 'Walk', 'Run')],
                      sha256=hashlib.sha256(open(dst, 'rb').read()).hexdigest())
+        if key not in entries:
+            manifest.append(entry)
         print(key, info['clips'], 'scale', info['scale'])
     json.dump(manifest, open(path, 'w', encoding='utf8'), indent=2)
 

@@ -1,8 +1,8 @@
 """Rebuild the slice trainer models straight from Ben's local Let's Go RomFS.
 
 usage: python import_letsgo_trainers.py <Let's Go RomFS root>
-Each key in assets/models/slice-models.json that has a Let's Go trainer pack is
-re-exported with the original skeleton and Idle/Walk/Run field clips (char2glb).
+Each trainer pack is exported with the original skeleton and Idle/Walk/Run field
+clips (char2glb). An existing assets/models/slice-models.json is updated.
 The previous GLB is kept as <key>/source/<key>_previous.glb. Models use the same
 0.01 scale as the Let's Go scenery so proportions match the world.
 """
@@ -21,13 +21,14 @@ def main(romfs):
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     models = os.path.join(root, 'assets', 'models')
     manifest_path = os.path.join(models, 'slice-models.json')
-    manifest = json.load(open(manifest_path, encoding='utf8'))
-    for entry in manifest:
-        pack = PACKS.get(entry['key'])
-        if not pack:
-            continue
+    os.makedirs(models, exist_ok=True)
+    manifest = json.load(open(manifest_path, encoding='utf8')) if os.path.isfile(manifest_path) else []
+    entries = {entry['key']: entry for entry in manifest}
+    for key, pack in PACKS.items():
+        entry = entries.get(key, {'key': key, 'file': f'models/{key}/{key}.glb'})
         src = os.path.join(romfs, 'bin', 'archive', 'chara', 'data', 'tr', pack + '.gfpak')
         dst = os.path.join(models, entry['file'].split('/', 1)[1])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         tmp = dst + '.new'
         try:
             info = char2glb.convert(src, tmp)
@@ -43,6 +44,8 @@ def main(romfs):
         entry.update(letsgo_pack='bin/archive/chara/data/tr/%s.gfpak' % pack, clip_speed=[info['native_speed'][c] for c in ('Idle', 'Walk', 'Run')],
                      height=None, sha256=hashlib.sha256(open(dst, 'rb').read()).hexdigest())
         entry.pop('height')
+        if key not in entries:
+            manifest.append(entry)
         print(entry['key'], info)
     json.dump(manifest, open(manifest_path, 'w', encoding='utf8'), indent=2)
 
