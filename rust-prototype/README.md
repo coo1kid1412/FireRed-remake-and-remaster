@@ -360,19 +360,28 @@ git -C reference/gba-audio-tools checkout --detach 45e84ba8a5a47b22e56dac7e4e87b
 python3 tools/import_music.py --rom "/path/to/your/firered_usa.gba"
 ```
 
-To add the Let's Go visuals, point the importers at your own extracted Let's Go
-RomFS directory. They require NumPy, Pillow, and texture2ddecoder. Run the field
-import before the kit import so the kit can reuse the converted textures:
+To add the Let's Go visuals, set `LETSGO_ROMFS` to your own extracted Let's Go
+RomFS directory containing `bin/archive`. Build the prototype first to generate
+`data/world.json`. The field import must precede the kit import so the kit can
+reuse the converted textures.
 
 ```sh
-python3 tools/letsgo/import_letsgo_field.py "$LETSGO_ROMFS" assets/letsgo
-python3 tools/letsgo/import_letsgo_kit.py "$LETSGO_ROMFS" assets/letsgo
-python3 tools/letsgo/import_letsgo_trainers.py "$LETSGO_ROMFS"
-python3 tools/letsgo/import_letsgo_pokemon.py "$LETSGO_ROMFS"
+export LETSGO_ROMFS="/path/to/your/RomFS"
+python3 -m venv target/letsgo-venv
+target/letsgo-venv/bin/python -m pip install numpy Pillow lz4 texture2ddecoder
+py=target/letsgo-venv/bin/python
+"$py" tools/letsgo/import_letsgo_field.py "$LETSGO_ROMFS" assets/letsgo
+"$py" tools/letsgo/import_letsgo_kit.py "$LETSGO_ROMFS" assets/letsgo
+"$py" tools/letsgo/import_letsgo_trainers.py "$LETSGO_ROMFS"
+"$py" tools/letsgo/import_letsgo_pokemon.py "$LETSGO_ROMFS"
+"$py" tools/letsgo/import_letsgo_battle.py "$LETSGO_ROMFS" assets/letsgo
 ```
 
-Imported models use Bevy's standard materials when the optional
-`assets/shaders/letsgo_field.wgsl` shader is absent.
+Restart the game after importing. The Settings row for Let's Go scenery displays
+`Assets not imported` when the scenery and kit are both absent. This importer
+covers Pallet Town and Route 1 outdoors, plus the separate battle arenas. The
+public checkout omits `assets/shaders/letsgo_field.wgsl`, so imported models
+use Bevy's standard materials by default.
 
 ### Windows
 

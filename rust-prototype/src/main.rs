@@ -788,6 +788,8 @@ fn hud(
     s: Res<Simulation>,
     p: Res<Preferences>,
     session: Res<persistence::Session>,
+    scenery: Res<models::Scenery>,
+    kit: Res<models::Kit>,
     mut text: Single<&mut Text, With<Hud>>,
 ) {
     let mut body = if p.menu {
@@ -832,7 +834,13 @@ fn hud(
             if p.character_animation { "ON" } else { "OFF" },
             if p.trainer_models { "ON" } else { "OFF" },
             if p.pokemon_models { "ON" } else { "OFF" },
-            if p.letsgo_scenery { "ON" } else { "OFF" },
+            if scenery.scenes.is_empty() && !kit.ready {
+                "Assets not imported"
+            } else if p.letsgo_scenery {
+                "ON"
+            } else {
+                "OFF"
+            },
             if p.effects { "ON" } else { "OFF" },
             if p.quick_start { "ON" } else { "OFF" },
             if p.battle_3d { "ON" } else { "OFF" },
