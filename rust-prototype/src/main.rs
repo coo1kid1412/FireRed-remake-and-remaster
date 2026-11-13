@@ -80,7 +80,7 @@ impl Preferences {
             native_state: ini.contains("native_state=1"),
             battle_slice: !ini.contains("battle_slice=0"),
             source_art: !ini.contains("source_textures=0"),
-            music: cfg!(windows) && ini.contains("music=1"),
+            music: music::SUPPORTED && ini.contains("music=1"),
             free_move: !ini.contains("free_movement=0"),
             diagonal: !ini.contains("diagonal_movement=0"),
             third_person: !ini.contains("third_person=0"),
@@ -254,6 +254,9 @@ fn main() {
         game.facing = Cell(1, -1);
     }
     let mut prefs = Preferences::load(base.join("config.ini"));
+    if music::SUPPORTED && args.iter().any(|arg| arg == "--music") {
+        prefs.music = true;
+    }
     prefs.letsgo_shading &= assets.letsgo_shader;
     if field_smoke || field_dialogue || args.iter().any(|a| a == "--field-scripts") {
         prefs.field_scripts = true;
@@ -402,7 +405,7 @@ fn main() {
             moving: false,
             dirty: true,
         })
-        .insert_resource(music::Music::new(
+        .insert_non_send_resource(music::Music::new(
             asset_root.clone(),
             capture.is_some() || smoke || battle_smoke || field_smoke || scene_smoke,
         ))
@@ -618,7 +621,7 @@ fn input(
             s.dirty = true;
             p.save();
         }
-        if cfg!(windows) && keys.just_pressed(KeyCode::Digit7) {
+        if music::SUPPORTED && keys.just_pressed(KeyCode::Digit7) {
             p.music = !p.music;
             p.save();
         }
@@ -796,7 +799,7 @@ fn hud(
             if p.diagonal { "ON" } else { "OFF" },
             if p.free_move { "ON" } else { "OFF" },
             if p.source_art { "ON" } else { "OFF" },
-            if !cfg!(windows) { "Unavailable" } else if p.music { "ON" } else { "OFF" },
+            if !music::SUPPORTED { "Unavailable" } else if p.music { "ON" } else { "OFF" },
             if p.battle_slice { "ON" } else { "OFF" },
             if p.native_state { "ON" } else { "OFF" },
             if p.field_scripts { "ON" } else { "OFF" },

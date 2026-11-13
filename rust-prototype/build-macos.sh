@@ -24,6 +24,9 @@ python3 tools/import_actors.py
 python3 tools/import_encounters.py
 python3 tools/import_battle.py
 python3 tools/check_battle_source.py
+if [ ! -f assets/music/demo/pallet.wav ] || [ ! -f assets/music/demo/route1.wav ]; then
+    python3 tools/make_demo_music.py
+fi
 
 target=x86_64-apple-darwin
 cargo +stable run --locked --target "$target" --no-default-features --bin firered-core-check

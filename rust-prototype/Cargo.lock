@@ -2002,6 +2002,7 @@ name = "firered-native-prototype"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "cc",
  "serde",
  "serde_json",
 ]

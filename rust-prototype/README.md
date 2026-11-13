@@ -342,9 +342,23 @@ WGPU_ADAPTER_NAME="Radeon Pro 5300M" \
 ```
 
 Omit `WGPU_ADAPTER_NAME` to use the default GPU. With no imported art, the
-prototype uses block scenery and its built-in palette. Music playback is disabled
-on macOS. The Windows asset-validation command `--check` also checks for a full
-set of imported textures, sprites, and WAVs.
+prototype uses block scenery and its built-in palette. The asset-validation
+command `--check` checks for a full set of imported textures, sprites, and WAVs.
+
+Press Tab, then 7 to toggle exploration music, or launch with `--music` to start
+with music enabled. The macOS build generates two
+original demo loops. The game switches between the Pallet Town and Route 1 tracks,
+and stops playback during battles or when the window loses focus. If you built
+with Cargo directly, run `python3 tools/make_demo_music.py` to generate the loops.
+
+The game prefers the original WAVs at `assets/music/pallet.wav` and
+`assets/music/route1.wav`. To render those from your own FireRed USA rev0 ROM:
+
+```sh
+git clone https://github.com/mudassarzahid/gba-audio-tools.git reference/gba-audio-tools
+git -C reference/gba-audio-tools checkout --detach 45e84ba8a5a47b22e56dac7e4e87b1ac605bcb19
+python3 tools/import_music.py --rom "/path/to/your/firered_usa.gba"
+```
 
 To add the Let's Go visuals, point the importers at your own extracted Let's Go
 RomFS directory. They require NumPy, Pillow, and texture2ddecoder. Run the field
@@ -453,7 +467,7 @@ F1 then 6 toggles source_textures; enabled by default. F1 then 7 toggles music;
 music=0 by default. Music stops when the window loses focus. The two offline
 WAVs use the local ROM's song IDs 300 and 291 (Pallet Town and Route 1), rendered
 with pinned gba-audio-tools revision 45e84ba8a5a47b22e56dac7e4e87b1ac605bcb19.
-Windows plays them as simple loops; there is no music interpreter or GBA runtime
+Windows and macOS play them as simple loops; there is no music interpreter or GBA runtime
 inside the application. Interiors currently reuse the Pallet theme. The offline
 render is not a claim of exact hardware audio fidelity or seamless loop timing.
 All automated checks force silence, even if the user's music preference is on.
