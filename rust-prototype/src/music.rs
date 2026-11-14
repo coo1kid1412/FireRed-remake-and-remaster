@@ -1,4 +1,4 @@
-//! Loop the local exploration WAV for the current map.
+//! Loop the local soundtrack for the current map or battle.
 use super::*;
 use std::path::Path;
 
@@ -84,14 +84,25 @@ pub(super) fn update(
     if !SUPPORTED || music.silent {
         return;
     }
-    if !p.music || !window.focused || battle.active {
+    if !p.music || !window.focused {
         if music.current.is_some() {
             music.stop();
         }
         return;
     }
-    let theme = if s.game.map == "route1" {
+    let map = s.game.map.as_str();
+    let theme = if battle.active {
+        if battle.battle.is_wild { "wild" } else { "trainer" }
+    } else if map == "lab" {
+        "lab"
+    } else if map.ends_with("_center") && map != "safari_center" {
+        "center"
+    } else if map == "viridian_forest" {
+        "forest"
+    } else if map == "route1" || map == "route2" {
         "route1"
+    } else if map.starts_with("viridian") || map.starts_with("pewter") || map.starts_with("route2_") {
+        "pewter"
     } else {
         "pallet"
     };
@@ -101,16 +112,22 @@ pub(super) fn update(
     music.stop();
     let tracks = music.base.join("music");
     let name = format!("{theme}.wav");
-    let original = tracks.join(&name);
+    let original = tracks.join("letsgo").join(&name);
+    let fallback = if theme == "route1" { "route1.wav" } else { "pallet.wav" };
     let path = if original.is_file() {
-        original
+        Some(original)
+    } else if battle.active {
+        None
     } else {
-        tracks.join("demo").join(name)
+        let imported = tracks.join(fallback);
+        Some(if imported.is_file() { imported } else { tracks.join("demo").join(fallback) })
     };
-    if music.play(&path) {
-        info!("Playing exploration music {}", path.display());
-    } else {
-        warn!("Cannot play exploration music {}", path.display());
+    if let Some(path) = path {
+        if music.play(&path) {
+            info!("Playing music {}", path.display());
+        } else {
+            warn!("Cannot play music {}", path.display());
+        }
     }
     music.current = Some(theme);
 }

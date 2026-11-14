@@ -3,6 +3,17 @@
 Hand-off note between sessions and tools. Update it when something changes.
 Last updated: 2026-10-10 (separate Rust prototype; installed C++ game unchanged).
 
+## Intel macOS Simplified Chinese and classic BGM
+
+- The Rust prototype uses a local Simplified Chinese catalog from the pinned
+  PretFRLG translation (SP/Xzonn) and local Noto Sans SC. Tab/U switches the
+  language and saves it in config.ini. The import covers the 180 map names,
+  967 exploration dialogue pages and all field text labels tied to those maps.
+  The wider data archive includes additional game modes, maps and test data.
+- Local Let's Go Pikachu music uses eight verified Wwise loop segments. Mac and
+  Windows prefer those WAVs, with FireRed or demo exploration music as fallback.
+  Trainer and wild encounters use separate cues. Assets remain ignored by Git.
+
 ## Intel macOS Rust prototype (2026-11-13)
 
 - `rust-prototype/build-macos.sh` imports the pinned FireRed source, checks the

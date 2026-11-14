@@ -4,6 +4,7 @@ mod battle_stage;
 mod letsgo_material;
 mod field_screen;
 mod music;
+mod locale;
 mod models;
 mod persistence;
 mod presentation;
@@ -35,6 +36,7 @@ struct Simulation {
 }
 #[derive(Resource)]
 struct Preferences {
+    zh: bool,
     field_scripts: bool,
     actor_scenes: bool,
     red_model: bool,
@@ -66,6 +68,10 @@ impl Preferences {
     fn load(path: PathBuf) -> Self {
         let ini = std::fs::read_to_string(&path).unwrap_or_default();
         Self {
+            zh: match ini.lines().find_map(|line| line.trim().strip_prefix("language=")) {
+                Some(language) => language == "zh-CN",
+                None => cfg!(target_os = "macos"),
+            },
             field_scripts: ini.contains("field_scripts=1"),
             actor_scenes: ini.contains("actor_scenes=1"),
             red_model: !ini.contains("red_model=0"),
@@ -111,6 +117,8 @@ impl Preferences {
         let text = format!("{text}actor_scenes={}\nred_model={}\n", u8::from(self.actor_scenes), u8::from(self.red_model));
         let text = format!("{text}character_animation={}\ntrainer_models={}\npokemon_models={}\n", u8::from(self.character_animation), u8::from(self.trainer_models), u8::from(self.pokemon_models));
         let text = format!("{text}letsgo_scenery={}\neffects={}\nquick_start={}\nbattle_3d={}\nletsgo_shading={}\n", u8::from(self.letsgo_scenery), u8::from(self.effects), u8::from(self.quick_start), u8::from(self.battle_3d), u8::from(self.letsgo_shading));
+        let language = if self.zh { "zh-CN" } else { "en" };
+        let text = format!("{text}language={language}\n");
         if let Err(e) = std::fs::write(&self.path, text) {
             eprintln!("Cannot save prototype settings: {e}");
         }
@@ -257,6 +265,11 @@ fn main() {
     if music::SUPPORTED && args.iter().any(|arg| arg == "--music") {
         prefs.music = true;
     }
+    let zh_font = std::fs::read(asset_root.join("fonts/NotoSansSC.ttf"))
+        .ok()
+        .and_then(|bytes| Font::try_from_bytes(bytes).ok());
+    let zh_available = zh_font.is_some();
+    prefs.zh &= zh_available;
     prefs.letsgo_shading &= assets.letsgo_shader;
     if field_smoke || field_dialogue || args.iter().any(|a| a == "--field-scripts") {
         prefs.field_scripts = true;
@@ -436,7 +449,7 @@ fn main() {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "FireRed Native 3D Prototype | Pallet slice".into(),
+                        title: "FireRed Native 3D Prototype".into(),
                         resolution: (1280, 720).into(),
                         visible: capture.is_none()
                             && !smoke
@@ -472,6 +485,10 @@ fn main() {
         .register_type::<bevy::gltf::GltfMeshExtras>()
         .register_type::<bevy::gltf::GltfMaterialExtras>()
         .register_type::<bevy::gltf::GltfSceneExtras>()
+        .insert_resource(locale::Catalog::load(&asset_root))
+        .add_systems(Startup, move |mut commands: Commands, mut fonts: ResMut<Assets<Font>>| {
+            commands.insert_resource(locale::ChineseFont(zh_font.as_ref().map(|font| fonts.add(font.clone()))));
+        })
         .add_systems(Startup, presentation::setup)
         .add_systems(Startup, models::setup)
         .add_systems(Startup, battle_screen::setup)
@@ -500,7 +517,7 @@ fn main() {
                 music::update,
                 hud,
                 (battle_screen::draw, battle_stage::hud_style).chain(),
-                font_safe_text,
+                (locale::apply_font, font_safe_text).chain(),
                 capture_frame,
             )
                 .chain(),
@@ -510,6 +527,7 @@ fn main() {
 fn input(
     keys: Res<ButtonInput<KeyCode>>,
     assets: Res<AssetRoot>,
+    font: Res<locale::ChineseFont>,
     mut s: ResMut<Simulation>,
     mut p: ResMut<Preferences>,
     time: Res<Time>,
@@ -594,6 +612,10 @@ fn input(
                 p.reset_pending = true;
             }
             return;
+        }
+        if font.0.is_some() && keys.just_pressed(KeyCode::KeyU) {
+            p.zh = !p.zh;
+            p.save();
         }
         if keys.just_pressed(KeyCode::Digit1) {
             p.orbit = !p.orbit;
@@ -790,9 +812,40 @@ fn hud(
     session: Res<persistence::Session>,
     scenery: Res<models::Scenery>,
     kit: Res<models::Kit>,
+    locale: Res<locale::Catalog>,
+    font: Res<locale::ChineseFont>,
     mut text: Single<&mut Text, With<Hud>>,
 ) {
-    let mut body = if p.menu {
+    let map = s.world.map(&s.game.map);
+    let mut body = if p.zh {
+        if p.menu {
+            let enabled = |on| if on { "开" } else { "关" };
+            let bgm = if music::SUPPORTED { enabled(p.music) } else { "不可用" };
+            let scenery = if scenery.scenes.is_empty() && !kit.ready { "未导入" } else { enabled(p.letsgo_scenery) };
+            let reset = if p.reset_pending { "再次按 R 确认重置进度。旧存档会备份。" } else { "R  重置存档和进度" };
+            format!(
+                "设置\n\n1  旋转镜头  {}     2  平滑移动  {}     3  第三人称镜头  {}\n4  斜向移动  {}     5  自由移动  {}     6  原版地表贴图  {}\n7  背景音乐  {}     8  开场劲敌对战  {}     9  本地存档（重启生效） {}\n0  原版剧情脚本（部分） {}     M  原版人物和剧情场景（部分） {}\nV  小赤模型  {}     A  人物动画  {}     T  训练家模型  {}     P  宝可梦模型  {}\nL  皮卡丘版场景  {}     K  画面特效  {}     G  3D 对战场景  {}\nY  快速开局  {}     H  场景着色  {}\n\nU  简体中文 / English     {reset}\nTab / F1 / Esc  关闭设置。设置自动保存。",
+                enabled(p.orbit), enabled(p.smooth), enabled(p.third_person),
+                enabled(p.diagonal), enabled(p.free_move), enabled(p.source_art),
+                bgm, enabled(p.battle_slice), enabled(p.native_state),
+                enabled(p.field_scripts), enabled(p.actor_scenes), enabled(p.red_model),
+                enabled(p.character_animation), enabled(p.trainer_models), enabled(p.pokemon_models),
+                scenery, enabled(p.effects), enabled(p.battle_3d), enabled(p.quick_start), enabled(p.letsgo_shading),
+            )
+        } else if slice_start::needs_starter(&p, &session) && s.game.dialogue.is_none() {
+            format!("{}  ·  试玩版\n选择你的伙伴    1 妙蛙种子    2 小火龙    3 杰尼龟\n可以探索真新镇和 1 号道路。草丛里有野生宝可梦。Tab 打开设置。", locale.map(map))
+        } else if let Some((name, lines, i)) = &s.game.dialogue {
+            let name = locale.speaker(name);
+            let line = locale.dialog(&lines[*i]);
+            if name.is_empty() { format!("{line}\n\n空格 / 回车  继续") }
+            else { format!("{name}\n\n{line}\n\n空格 / 回车  继续") }
+        } else {
+            let hint = if map.indoor { "用门和楼梯探索各个房间。" }
+                else if s.game.map == "route1" { "向南回到真新镇。可以和店员交谈，向南跳下台阶。" }
+                else { "向北前往 1 号道路。可以进屋、读告示牌，或与邻居交谈。" };
+            format!("{}  ·  试玩版\nWASD 移动    Shift 奔跑    空格 互动    鼠标 转动镜头    Esc 释放光标    Tab 设置    B 劲敌对战\n{hint}", locale.map(map))
+        }
+    } else if p.menu {
         format!(
             "SETTINGS\n\n1   Camera rotation: {}\n2   Smooth movement: {}\n3   Third-person mouse camera: {}\n4   Diagonal grid movement: {}\n5   Free movement: {}\n6   Original surface textures: {}\n7   Music: {}\n8   Opening rival battle slice: {}\n9   Native save/load (restart): {}\n0   Original field scripts (partial): {}\nV   Imported Red playable model: {}\n\nTab / F1 / Esc: close     Changes save automatically.",
             if p.orbit { "ON" } else { "OFF" },
@@ -827,7 +880,7 @@ fn hud(
             }
         )
     };
-    if p.menu {
+    if p.menu && !p.zh {
         body.push_str(&format!(
             "\nM: Original actors and map scenes (partial): {}\nA: Character animations: {}   T: Trainer models: {}   P: Pokemon models: {}   L: Let's Go scenery: {}   K: Effects: {}\nY: Slice quick start (pick a starter, skip story): {}   G: 3D battle stage: {}\nH: Let's Go shading (trees, ground, water): {}",
             if p.actor_scenes { "ON" } else { "OFF" },
@@ -852,15 +905,23 @@ fn hud(
             "\nR: reset Rust save and progress (keeps current location)"
         });
     }
+    if p.menu && !p.zh && font.0.is_some() {
+        body.push_str("\nU: switch language (Chinese / English)");
+    }
     if !session.error.is_empty() {
-        body.push_str(&format!("\n{}", session.error));
+        let error = if p.zh { locale::field_error(&session.error) } else { &session.error };
+        body.push_str(&format!("\n{error}"));
     }
     if text.0 != body {
+        if p.zh && !session.error.is_empty() && session.is_changed() {
+            warn!("{}", session.error);
+        }
         text.0 = body;
     }
 }
 /// The bundled UI font has no accented glyphs; show "Pokemon" instead of a missing box.
-fn font_safe_text(mut q: Query<&mut Text, Changed<Text>>) {
+fn font_safe_text(p: Res<Preferences>, mut q: Query<&mut Text, Changed<Text>>) {
+    if p.zh { return; }
     for mut t in &mut q {
         if !t.0.is_ascii() {
             let fixed = t.0.replace('é', "e").replace('É', "E").replace('…', "...")

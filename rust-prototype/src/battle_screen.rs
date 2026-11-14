@@ -236,6 +236,7 @@ pub(super) fn controls(
 pub(super) fn draw(
     screen: Res<Screen>,
     p: Res<Preferences>,
+    locale: Res<super::locale::Catalog>,
     mut panels: Query<&mut Node, With<Panel>>,
     mut labels: Query<(&MonLabel, &mut Text)>,
     mut bars: Query<(&HpBar, &mut Node), Without<Panel>>,
@@ -327,25 +328,29 @@ pub(super) fn draw(
     if !screen.active {
         return;
     }
+    let choose = |en: &'static str, zh: &'static str| if p.zh { zh } else { en };
     for mut text in &mut headers {
         text.0 = if screen.battle.is_wild {
-            "WILD POKÉMON BATTLE  |  NATIVE RUST".into()
+            choose("WILD POKÉMON BATTLE  |  NATIVE RUST", "野生宝可梦对战").into()
         } else {
-            "FIRST RIVAL BATTLE  |  NATIVE RUST".into()
+            choose("FIRST RIVAL BATTLE  |  NATIVE RUST", "初次劲敌对战").into()
         };
     }
     for mut text in &mut subtitles {
         text.0 = if screen.battle.is_wild {
-            "Wild battle. Throw Poké Balls with [C], fight with [1-4], or flee with [5].".into()
+            choose("Wild battle. Throw Poké Balls with [C], fight with [1-4], or flee with [5].", "按 C 投出精灵球，按 1–4 选择招式，按 5 逃跑。").into()
         } else {
-            "Original FireRed trainer AI and four opening moves. Fixed test starter and random seed.".into()
+            choose("Original FireRed trainer AI and four opening moves. Fixed test starter and random seed.", "按 1–4 选择招式。").into()
         };
     }
     for (label, mut text) in &mut labels {
         let m = &screen.battle.mons[label.0];
+        let name = if p.zh { locale.species(&m.name) } else { &m.name };
+        let (hp, attack, defense, stages) = if p.zh {
+            ("体力", "攻击", "防御", "能力等级")
+        } else { ("HP", "Atk", "Def", "Stages") };
         text.0 = format!(
-            "{}  Lv. {}\nHP  {} / {}\nAtk {}   Def {}\nStages {:+} / {:+}",
-            m.name,
+            "{name}  Lv. {}\n{hp}  {} / {}\n{attack} {}   {defense} {}\n{stages} {:+} / {:+}",
             m.level,
             m.hp,
             m.stats[0],
@@ -360,21 +365,35 @@ pub(super) fn draw(
         node.width = percent(100. * m.hp as f32 / m.stats[0] as f32);
     }
     for mut text in &mut log {
-        text.0 = screen.battle.log.join("\n");
+        text.0 = if p.zh {
+            screen.battle.log.iter().map(|line| locale.battle_line(line)).collect::<Vec<_>>().join("\n")
+        } else {
+            screen.battle.log.join("\n")
+        };
         if !screen.error.is_empty() {
-            text.0.push_str(&format!("\n{}", screen.error));
+            text.0.push_str(&format!("\n{}", if p.zh { locale.battle_line(&screen.error) } else { screen.error.clone() }));
         }
     }
     for mut text in &mut status {
         text.0 = if screen.battle.winner.is_some() {
             if screen.battle.caught {
-                "Pokémon caught! Press Esc to return to field".into()
+                choose("Pokémon caught! Press Esc to return to field", "捕捉成功！按 Esc 返回地图。").into()
             } else if screen.battle.fled {
-                "Got away safely! Press Esc to return to field".into()
+                choose("Got away safely! Press Esc to return to field", "顺利逃跑了！按 Esc 返回地图。").into()
             } else if screen.battle.winner == Some(0) {
-                "Battle ended - You won! Press Esc or R to return".into()
+                choose("Battle ended - You won! Press Esc or R to return", "对战胜利！按 Esc 返回。").into()
             } else {
-                "Battle ended - Defeated! Press Esc or R to return".into()
+                choose("Battle ended - Defeated! Press Esc or R to return", "对战失败。按 Esc 返回。").into()
+            }
+        } else if p.zh {
+            if screen.battle.turn > 0 {
+                let actions = if screen.battle.is_wild { "1–4 招式　C 捕捉　5 逃跑" } else { "1–4 选择招式" };
+                format!("第 {} 回合　{actions}", screen.battle.turn)
+            } else if screen.battle.is_wild {
+                let mon = &screen.battle.mons[1];
+                format!("野生的{}出现了！Lv. {}　C 捕捉　1–4 招式", locale.species(&mon.name), mon.level)
+            } else {
+                "请选择招式。".into()
             }
         } else if let Some(_ai) = &screen.battle.last_ai {
             format!(
@@ -387,8 +406,7 @@ pub(super) fn draw(
                 screen.battle.mons[1].name, screen.battle.mons[1].level
             )
         } else {
-            "Charmander: Hardy, IVs 31 / EVs 0. Rival Squirtle: original trainer-generated stats."
-                .into()
+            choose("Charmander: Hardy, IVs 31 / EVs 0. Rival Squirtle: original trainer-generated stats.", "轮到你行动。请选择招式。").into()
         };
     }
     for (label, mut text) in &mut buttons {
@@ -396,7 +414,9 @@ pub(super) fn draw(
             Action::Move(slot) => {
                 let m = &screen.battle.mons[0];
                 if slot < m.moves.len() {
-                    let move_name = m.moves[slot].trim_start_matches("MOVE_").replace('_', " ");
+                    let move_name = if p.zh {
+                        locale.move_name(&m.moves[slot]).to_owned()
+                    } else { m.moves[slot].trim_start_matches("MOVE_").replace('_', " ") };
                     text.0 = format!("{}  {}  PP {}", slot + 1, move_name, m.pp[slot]);
                 } else {
                     text.0 = "-".into();
@@ -404,14 +424,14 @@ pub(super) fn draw(
             }
             Action::Catch => {
                 text.0 = if screen.battle.is_wild {
-                    "C  Poké Ball".into()
+                    choose("C  Poké Ball", "C  精灵球").into()
                 } else {
                     "-".into()
                 };
             }
             Action::Run => {
                 text.0 = if screen.battle.is_wild {
-                    "5  Run".into()
+                    choose("5  Run", "5  逃跑").into()
                 } else {
                     "-".into()
                 };
@@ -420,10 +440,10 @@ pub(super) fn draw(
                 text.0 = if screen.integrated {
                     "-".into()
                 } else {
-                    "R  Restart".into()
+                    choose("R  Restart", "R  重来").into()
                 };
             }
-            _ => {}
+            Action::Close => text.0 = choose("Esc  Return", "Esc  返回").into(),
         }
     }
 }

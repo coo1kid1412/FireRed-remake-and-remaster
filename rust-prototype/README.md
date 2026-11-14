@@ -345,20 +345,46 @@ Omit `WGPU_ADAPTER_NAME` to use the default GPU. With no imported art, the
 prototype uses block scenery and its built-in palette. The asset-validation
 command `--check` checks for a full set of imported textures, sprites, and WAVs.
 
-Press Tab, then 7 to toggle exploration music, or launch with `--music` to start
-with music enabled. The macOS build generates two
-original demo loops. The game switches between the Pallet Town and Route 1 tracks,
-and stops playback during battles or when the window loses focus. If you built
-with Cargo directly, run `python3 tools/make_demo_music.py` to generate the loops.
+Press Tab then 7 to toggle background music, or launch with `--music`.
+The local Let's Go soundtrack takes precedence. For a Pikachu base-game RomFS,
+import the original loop segments with Python and libopus:
 
-The game prefers the original WAVs at `assets/music/pallet.wav` and
-`assets/music/route1.wav`. To render those from your own FireRed USA rev0 ROM:
+```sh
+python3 tools/letsgo/import_letsgo_music.py reference/letsgo-romfs assets/music/letsgo \
+  --opus-lib /usr/local/opt/opus/lib/libopus.dylib
+```
+
+The path above is the Intel Homebrew libopus path. The soundtrack includes Pallet
+Town, Route 1, Oak's Lab, Pokémon Center, Pewter/Viridian, Viridian Forest,
+trainer battles and wild encounters. The original Let's Go wild encounter cue
+comes from its catching sequence. Playback pauses when the window loses focus.
+
+Without the Let's Go tracks, the game uses imported FireRed exploration WAVs
+(`assets/music/pallet.wav`, `assets/music/route1.wav`) or the synthesized demo
+loops from `tools/make_demo_music.py`. To render those from your own FireRed USA rev0 ROM:
 
 ```sh
 git clone https://github.com/mudassarzahid/gba-audio-tools.git reference/gba-audio-tools
 git -C reference/gba-audio-tools checkout --detach 45e84ba8a5a47b22e56dac7e4e87b1ac605bcb19
 python3 tools/import_music.py --rom "/path/to/your/firered_usa.gba"
 ```
+
+With Noto Sans SC installed locally at `assets/fonts/NotoSansSC.ttf`, the Intel
+Mac build starts in Simplified Chinese. Press Tab then U to switch languages.
+The imported local catalog supplies map, dialogue, species, move and item names.
+Build/import the original data first, then generate the optional Chinese catalog
+from [Xzonn/PretFRLG](https://github.com/Xzonn/PretFRLG/tree/a04f63173ca5fcf9c2db18ee223cf057c7f232c0),
+based on the SP translation:
+
+```sh
+git clone https://github.com/Xzonn/PretFRLG.git reference/PretFRLG
+git -C reference/PretFRLG checkout --detach a04f63173ca5fcf9c2db18ee223cf057c7f232c0
+python3 tools/import_zh.py reference/PretFRLG
+```
+
+Get the Simplified Chinese font from [Google Fonts](https://fonts.google.com/noto/specimen/Noto+Sans+SC).
+New builds can continue to use the imported catalog as long as the field archive
+and local catalog were generated for the same revision and platform.
 
 To add the Let's Go visuals, set `LETSGO_ROMFS` to your own extracted Let's Go
 RomFS directory containing `bin/archive`. Build the prototype first to generate

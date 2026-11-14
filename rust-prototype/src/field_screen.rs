@@ -285,32 +285,30 @@ impl Field {
         }
         Ok(())
     }
-    fn text(&self, address: u32) -> Result<Vec<String>, String> {
-        let mut text = self
-            .data
-            .text(address)?
+    fn text(&self, address: u32, zh: Option<&super::locale::Catalog>) -> Result<Vec<String>, String> {
+        let original = self.data.text(address)?;
+        let translated = zh.and_then(|catalog| catalog.texts.get(&address));
+        let mut text = translated.map_or(original, String::as_str)
             .trim_end_matches('$')
-            .replace("{PLAYER}", "RED")
-            .replace("{RIVAL}", "BLUE");
+            .replace("{PLAYER}", if translated.is_some() { "小赤" } else { "RED" })
+            .replace("{RIVAL}", if translated.is_some() { "小绿" } else { "BLUE" });
         let vm = self.vm.as_ref().ok_or("No current script")?;
         for (i, value) in vm.strings.iter().enumerate() {
-            text = text.replace(&format!("{{STR_VAR_{}}}", i + 1), value);
+            let display = zh.filter(|_| translated.is_some())
+                .map_or(value.as_str(), |catalog| catalog.argument(value));
+            text = text.replace(&format!("{{STR_VAR_{}}}", i + 1), display);
         }
         if text.contains('{') || text.contains('}') {
+            if translated.is_some() { return self.text(address, None); }
             return Err("Unported original text placeholder/control".into());
         }
-        // The current prototype font lacks the original accented Pokemon glyph.
-        text = text.replace("POK\u{e9}MON", "POKEMON");
-        // Existing native dialogue presents instant pages; print/fanfare timing is deferred.
         Ok(text
+            .replace("POKéMON", "POKEMON")
             .split("\\p")
-            .map(|page| {
-                page.replace("\\n", "\n")
-                    .replace("\\l", "\n")
-                    .replace("\\\"", "\"")
-            })
+            .map(|page| page.replace("\\n", "\n").replace("\\l", "\n").replace("\\\"", "\""))
             .collect())
     }
+
 }
 
 fn start_trainer_battle(
@@ -382,6 +380,7 @@ pub(super) fn update(
     mut simulation: ResMut<Simulation>,
     mut session: ResMut<Session>,
     prefs: Res<Preferences>,
+    locale: Option<Res<super::locale::Catalog>>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     replay: Res<Replay>,
@@ -1022,7 +1021,7 @@ pub(super) fn update(
                     }
                     Host::Lock(_) | Host::Release(_) | Host::Sound(_, _) | Host::WaitSound(_) => {}
                     Host::Message(address) => {
-                        let pages = field.text(address)?;
+                        let pages = field.text(address, locale.as_deref().filter(|_| prefs.zh))?;
                         simulation.game.dialogue = Some((field.name.clone(), pages, 0));
                         field.message_ack = false;
                     }
