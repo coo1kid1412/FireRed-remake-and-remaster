@@ -101,3 +101,40 @@ pub(super) fn auto(
         capture.frame = capture.frame.min(10); // hold the screenshot until the battle starts
     }
 }
+
+/// Smoke captures for the real C and I shortcuts once --slice-auto enters battle.
+pub(super) fn preview_item(
+    battle: Res<battle_screen::Screen>,
+    prefs: Res<Preferences>,
+    mut capture: ResMut<Capture>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut preview: Local<Option<Option<KeyCode>>>,
+    mut entered: Local<Option<f32>>,
+    mut sent: Local<bool>,
+) {
+    let key = preview.get_or_insert_with(|| {
+        std::env::args().find_map(|arg| match arg.as_str() {
+            "--slice-catch" => Some(KeyCode::KeyC),
+            "--slice-bag" => Some(KeyCode::KeyI),
+            _ => None,
+        })
+    });
+    let Some(key) = *key else { return };
+    if !battle.active || capture.path.is_none() {
+        return;
+    }
+    let start = *entered.get_or_insert_with(|| time.elapsed_secs());
+    let elapsed = time.elapsed_secs() - start;
+    if elapsed >= 2.5 && !*sent {
+        keys.press(key);
+        *sent = true;
+        eprintln!("[slice-auto] exercising {key:?}");
+    }
+    if elapsed < 2.90 {
+        capture.frame = capture.frame.min(10);
+    } else if capture.frame < 159 {
+        assert!(key == KeyCode::KeyI || !prefs.effects || battle.throw_animation.is_some());
+        capture.frame = 159;
+    }
+}

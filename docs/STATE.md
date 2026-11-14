@@ -3,6 +3,23 @@
 Hand-off note between sessions and tools. Update it when something changes.
 Last updated: 2026-10-10 (separate Rust prototype; installed C++ game unchanged).
 
+## Intel macOS capture animation and bag (2026-11-14)
+
+- Press C in a wild battle to throw a standard Poké Ball. The ball arc, absorption,
+  bounce and zero-to-three shakes use the existing FireRed capture result. A
+  failed throw gives the enemy one action after the animation. Setting K controls
+  visual effects and skips the animation when disabled.
+- Press I in the field or in an integrated battle to see the five native bag pockets.
+  Confirm medicine and then a party member. The target view shows HP and status.
+  Standard HP medicines, status cures and revives share the native bag count.
+  A successful battle use takes one turn. An ineffective use consumes nothing.
+- Setting J enables the bag by default. If local saving is enabled, item counts
+  and party HP are saved together. The Route 1 clerk's one-time Potion also enters
+  the native bag without disk saves. The bag currently lists unsupported items
+  without applying effects for TMs, berries or endgame tools.
+- Verify with `--check --logic-only`. The Route 1 visual smoke supports
+  `--slice-catch` and `--slice-bag` with `--slice-auto --capture <png>`.
+
 ## Intel macOS encounter and battle rendering update (2026-11-14)
 
 - Pokémon color atlases use mirrored U sampling. Charmander's ordinary glTF

@@ -183,27 +183,22 @@ impl Session {
         }
         session
     }
+    /// Merge the one-off exploration clerk reward into the native bag even
+    /// when disk saves are off. Later bag changes never replay this award.
+    pub(super) fn collect_clerk_potion(&mut self, game: &Game) {
+        if !game.flags.contains("FLAG_GOT_POTION_ON_ROUTE_1") || self.state.events.flag_get(0x230) {
+            return;
+        }
+        let id = self.data.ids["ITEM_POTION"];
+        if self.state.bag.add(&self.data, &mut self.state.events, id, 1) {
+            self.state.events.flag_set(0x230);
+        }
+    }
+
     fn store(&mut self, game: &Game) -> Result<(), String> {
         let position = Position::capture(game);
         self.state.map = position.map.clone();
         self.state.position = [position.cell.0, position.cell.1];
-        if game.flags.contains("FLAG_GOT_POTION_ON_ROUTE_1") {
-            self.state.events.flag_set(0x230);
-        }
-        let id = self.data.ids["ITEM_POTION"];
-        let quantity = game.inventory.get("ITEM_POTION").copied().unwrap_or(0);
-        let old = self.state.bag.pockets[0]
-            .iter()
-            .find(|s| s.item == id)
-            .map_or(0, |s| s.quantity);
-        if quantity > old
-            && !self
-                .state
-                .bag
-                .add(&self.data, &mut self.state.events, id, quantity - old)
-        {
-            return Err("Cannot persist exploration inventory".into());
-        }
         self.state.validate(&self.data)?;
         let fingerprint = serde_json::to_string(&(
             position.clone(),
@@ -236,6 +231,11 @@ pub(super) fn update(
     simulation: Res<Simulation>,
     prefs: Res<Preferences>,
 ) {
+    if simulation.game.flags.contains("FLAG_GOT_POTION_ON_ROUTE_1")
+        && !session.state.events.flag_get(0x230)
+    {
+        session.collect_clerk_potion(&simulation.game);
+    }
     if !session.active
         || !prefs.native_state
         || simulation.game.busy()
@@ -257,6 +257,7 @@ pub(super) fn check_world(world: &World, directory: &std::path::Path) -> Result<
         let mut session = Session::open(path.clone(), true, &mut game, world);
         game.flags.insert("FLAG_GOT_POTION_ON_ROUTE_1".into());
         game.inventory.insert("ITEM_POTION".into(), 1);
+        session.collect_clerk_potion(&game);
         session.actors.insert(
             "pallet".into(),
             vec![firered_native_prototype::actors::Template {
@@ -280,6 +281,28 @@ pub(super) fn check_world(world: &World, directory: &std::path::Path) -> Result<
         {
             return Err("Exploration persistence integration failed".into());
         }
+        // A stale exploration fixture count must not refill a consumed Potion.
+        let potion = loaded.data.ids["ITEM_POTION"];
+        let mut mon = firered_native_prototype::core::Pokemon::create(
+            &loaded.data,
+            &mut loaded.state.rng,
+            loaded.data.ids["SPECIES_CHARMANDER"],
+            5,
+            31,
+            Some(0),
+            firered_native_prototype::core::OtId::Player,
+            loaded.state.trainer_id,
+        )?;
+        mon.hp -= 2;
+        loaded.state.party.push(mon);
+        assert_eq!(loaded.state.use_medicine(&loaded.data, potion, 0).unwrap().restored_hp, 2);
+        loaded.collect_clerk_potion(&restored);
+        loaded.store(&restored)?;
+        let mut after_use = Game::new(world, "pallet");
+        let reopened = Session::open(path.clone(), true, &mut after_use, world);
+        assert!(!reopened.state.bag.has(&reopened.data, potion, 1));
+        assert_eq!(reopened.state.party[0].hp, reopened.state.party[0].stats[0]);
+        assert!(reopened.state.events.flag_get(0x230));
         loaded.reset(&mut restored, true)?;
         let mut reset_game = Game::new(world, "pallet");
         let reset = Session::open(path.clone(), true, &mut reset_game, world);

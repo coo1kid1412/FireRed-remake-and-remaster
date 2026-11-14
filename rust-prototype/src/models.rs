@@ -346,7 +346,12 @@ pub(super) fn update(
                     transform.rotation = Quat::from_rotation_y(-0.25 + (phase * 1.8).sin() * 0.025);
                     transform.scale = Vec3::new(1., 1. + (phase * 2.).sin() * 0.006, 1.);
                 }
-                battle.active && p.pokemon_models
+                let capture_scale = if i == 1 && stage { battle.opponent_scale() } else { 1. };
+                transform.scale *= capture_scale.max(0.01);
+                if stage && i == 1 {
+                    transform.translation.y += (1. - capture_scale) * 0.30;
+                }
+                battle.active && p.pokemon_models && capture_scale > 0.
             }
             Role::Trainer => {
                 if !(battle.active && stage && p.red_model) {

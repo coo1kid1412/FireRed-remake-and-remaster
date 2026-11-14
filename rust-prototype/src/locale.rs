@@ -34,6 +34,22 @@ impl Catalog {
         self.moves.get(id).map_or(id.trim_start_matches("MOVE_"), String::as_str)
     }
 
+    pub fn party_species(
+        &self, core: &firered_native_prototype::core::Data, id: u16, zh: bool,
+    ) -> String {
+        let name = core.ids.iter().find_map(|(key, value)| {
+            (*value == id).then(|| key.strip_prefix("SPECIES_")).flatten()
+        }).unwrap_or("Pokémon");
+        if zh { self.species(name).to_owned() } else { name.replace('_', " ") }
+    }
+
+    pub fn bag_item<'a>(&'a self, core: &'a firered_native_prototype::core::Data, id: u16, zh: bool) -> &'a str {
+        let english = core.items.get(&id).and_then(|item| item.fields.get("english"))
+            .and_then(serde_json::Value::as_str).unwrap_or("—");
+        if zh { self.items.get(&english.to_uppercase()).map_or(english, String::as_str) }
+        else { english }
+    }
+
     pub fn argument<'a>(&'a self, value: &'a str) -> &'a str {
         let item = value.to_uppercase();
         self.items.get(&item).map_or_else(|| self.species(value), String::as_str)
@@ -193,7 +209,8 @@ impl Catalog {
             "Finish this world battle before returning." => "请先完成这场对战。",
             "The battle has already ended!" | "Battle has ended; reset to play again" => "对战已经结束。",
             "The Pokémon Boxes are full!" => "宝可梦盒子已满。",
-            "No POKE BALLS are available." => "没有可用的精灵球。",
+            "No POKE BALLS are available." | "No Poké Balls of this type are available." => "没有可用的这种精灵球。",
+            "Threw a Poké Ball!" => "投出了精灵球！",
             "Unsupported move effect" => "此招式的效果尚未移植。",
             "Safari Ball needs Safari catch-factor setup" => "当前场景无法使用狩猎球。",
             _ => "",

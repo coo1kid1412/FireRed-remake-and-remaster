@@ -1,7 +1,10 @@
 //! Native UI adapter. World wild battles update only the native session state.
 use super::{Preferences, Simulation};
 use bevy::prelude::*;
-use firered_native_prototype::battle::{Battle, Data};
+use firered_native_prototype::{
+    battle::{Battle, Data},
+    core::{Medicine, MedicineChange, MedicineError},
+};
 
 #[derive(Resource)]
 pub(super) struct Screen {
@@ -10,6 +13,8 @@ pub(super) struct Screen {
     pub battle: Battle,
     pub data: Data,
     pub error: String,
+    pub party_slot: Option<usize>,
+    pub throw_animation: Option<super::capture_fx::ThrowAnimation>,
 }
 impl Screen {
     pub fn new(active: bool) -> Self {
@@ -21,9 +26,80 @@ impl Screen {
             battle,
             data,
             error: String::new(),
+            party_slot: None,
+            throw_animation: None,
         }
     }
-    fn act(&mut self, action: Action, session: &mut super::persistence::Session) {
+    pub fn throw_ball(
+        &mut self,
+        session: &mut super::persistence::Session,
+        ball: u16,
+        animate: bool,
+    ) -> Result<(), String> {
+        if self.throw_animation.is_some() {
+            return Err("A Poké Ball is already in flight.".into());
+        }
+        if !self.battle.is_wild {
+            return Err("The trainer blocked the BALL!".into());
+        }
+        if self.battle.winner.is_some() {
+            return Err("The battle has already ended!".into());
+        }
+        if session.state.player_and_storage_full() {
+            return Err("The Pokémon Boxes are full!".into());
+        }
+        self.battle.ball_multiplier(ball)?;
+        if !session.state.bag.remove(&session.data, ball, 1) {
+            return Err("No Poké Balls of this type are available.".into());
+        }
+        self.error.clear();
+        self.battle.log.clear();
+        let caught = self.battle.catch(ball)?;
+        if animate {
+            // Hold only presentation. Keep the existing capture RNG and use
+            // precisely the same enemy turn after a breakout.
+            let outcome = self.battle.last_throw.expect("Resolved regular ball throw");
+            let result = self.battle.log.pop().expect("Resolved capture message");
+            self.battle.log.push("Threw a Poké Ball!".into());
+            self.throw_animation = Some(super::capture_fx::ThrowAnimation::new(outcome, result));
+        } else if !caught {
+            self.battle.enemy_turn(&self.data)?;
+        }
+        Ok(())
+    }
+
+    pub fn use_medicine(
+        &mut self, session: &mut super::persistence::Session, item: u16, target: usize,
+    ) -> Result<MedicineChange, MedicineError> {
+        if !self.active || !self.integrated || self.battle.winner.is_some() || self.throw_animation.is_some() {
+            return Err(MedicineError::Unsupported);
+        }
+        let change = if self.party_slot == Some(target) {
+            let medicine = Medicine::from_item(&session.data, item).ok_or(MedicineError::Unsupported)?;
+            let mon = &mut self.battle.mons[0];
+            medicine.use_from(
+                &session.data, &mut session.state.bag, item,
+                &mut mon.hp, mon.stats[0], &mut mon.status, Some(&mut mon.status2),
+            )?
+        } else {
+            session.state.use_medicine(&session.data, item, target)?
+        };
+        self.error.clear();
+        self.battle.log.clear();
+        if let Err(error) = self.battle.enemy_turn(&self.data) {
+            self.error = error;
+        }
+        Ok(change)
+    }
+
+    pub fn opponent_scale(&self) -> f32 {
+        self.throw_animation.as_ref().map_or(
+            if self.battle.caught { 0. } else { 1. },
+            super::capture_fx::ThrowAnimation::opponent_scale,
+        )
+    }
+
+    fn act(&mut self, action: Action, session: &mut super::persistence::Session, effects: bool) {
         self.error.clear();
         match action {
             Action::Move(slot) => {
@@ -60,36 +136,12 @@ impl Screen {
                 }
             }
             Action::Catch => {
-                if !self.battle.is_wild {
-                    self.error = "The trainer blocked the BALL!".into();
-                } else if self.battle.winner.is_some() {
-                    self.error = "The battle has already ended!".into();
-                } else if session.state.player_and_storage_full() {
-                    self.error = "The Pokémon Boxes are full!".into();
-                } else {
-                    let ball = session.data.ids["ITEM_POKE_BALL"];
-                    if !session.state.bag.remove(&session.data, ball, 1) {
-                        self.error = "No POKE BALLS are available.".into();
-                    } else {
-                        match self.battle.catch(ball) {
-                            Ok(false) => {
-                                if let Err(e) = self.battle.enemy_turn(&self.data) {
-                                    self.error = e;
-                                }
-                            }
-                            Ok(true) => {}
-                            Err(e) => {
-                                // Unsupported ball logic must not consume the item.
-                                let super::persistence::Session { data, state, .. } = &mut *session;
-                                let firered_native_prototype::core::State { bag, events, .. } =
-                                    state;
-                                let _ = bag.add(data, events, ball, 1);
-                                self.error = e;
-                            }
-                        }
-                    }
+                let ball = session.data.ids["ITEM_POKE_BALL"];
+                if let Err(error) = self.throw_ball(session, ball, effects) {
+                    self.error = error;
                 }
             }
+            Action::Bag => {}
         }
     }
 }
@@ -125,13 +177,14 @@ pub(super) struct MonLabel(usize);
 #[derive(Component)]
 pub(super) struct HpBar(usize);
 #[derive(Component)]
-pub(super) struct MonImage(usize);
+pub(super) struct MonImage(pub usize);
 #[derive(Component)]
 pub(super) struct ButtonLabel(Action);
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Action {
     Move(usize),
     Catch,
+    Bag,
     Run,
     Reset,
     Close,
@@ -168,6 +221,7 @@ pub(super) fn setup(mut c: Commands) {
                 (Action::Move(2),"3 Move 3"),
                 (Action::Move(3),"4 Move 4"),
                 (Action::Catch,"C Poké Ball"),
+                (Action::Bag,"I Bag"),
                 (Action::Run,"5 Run"),
                 (Action::Reset,"R Restart"),
                 (Action::Close,"Esc Return"),
@@ -183,13 +237,14 @@ pub(super) fn controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut screen: ResMut<Screen>,
     p: Res<Preferences>,
+    bag: Res<super::bag_screen::BagScreen>,
     mut session: ResMut<super::persistence::Session>,
     mut interactions: Query<
         (&Interaction, &Action, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>),
     >,
 ) {
-    if !screen.active || p.menu {
+    if !screen.active || p.menu || bag.captured_input() || screen.throw_animation.is_some() {
         return;
     }
     let action = if keys.just_pressed(KeyCode::Digit1) {
@@ -220,16 +275,18 @@ pub(super) fn controls(
     } else {
         None
     };
-    if let Some(a) = action {
-        screen.act(a, &mut session);
+    let action_from_key = action;
+    if let Some(a) = action_from_key {
+        screen.act(a, &mut session, p.effects);
     }
     for (interaction, action, mut color) in &mut interactions {
         color.0 = match interaction {
             Interaction::Hovered => Color::srgb_u8(67, 104, 119),
             _ => Color::srgb_u8(48, 76, 91),
         };
-        if *interaction == Interaction::Pressed {
-            screen.act(*action, &mut session);
+        if *interaction == Interaction::Pressed && action_from_key.is_none() && screen.throw_animation.is_none() {
+            screen.act(*action, &mut session, p.effects);
+            break;
         }
     }
 }
@@ -260,7 +317,7 @@ pub(super) fn draw(
     >,
     server: Res<AssetServer>,
     assets: Res<super::AssetRoot>,
-    mut images: Query<(&MonImage, &mut ImageNode)>,
+    mut images: Query<(&MonImage, &mut ImageNode, &mut UiTransform, &mut Visibility)>,
     previews: Res<super::models::Previews>,
     models: Query<&super::models::Character>,
     mut buttons: Query<
@@ -299,7 +356,12 @@ pub(super) fn draw(
     // Scene loading completes independently of turn changes. Update portraits
     // when ready while retaining stable text shaping between actions.
     if screen.active {
-        for (img, mut node) in &mut images {
+        for (img, mut node, mut transform, mut visible) in &mut images {
+            if img.0 == 1 {
+                let scale = screen.opponent_scale();
+                transform.scale = Vec2::splat(scale.max(0.01));
+                *visible = if scale <= 0. { Visibility::Hidden } else { Visibility::Inherited };
+            }
             let name = &screen.battle.mons[img.0].name;
             let image = if p.pokemon_models && super::models::preview_ready(&models, img.0, name) {
                 previews.images[img.0].clone()
@@ -377,7 +439,9 @@ pub(super) fn draw(
         }
     }
     for mut text in &mut status {
-        text.0 = if screen.battle.winner.is_some() {
+        text.0 = if screen.throw_animation.is_some() {
+            choose("Poké Ball in play", "正在捕捉……").into()
+        } else if screen.battle.winner.is_some() {
             if screen.battle.caught {
                 choose("Pokémon caught! Press Esc to return to field", "捕捉成功！按 Esc 返回地图。").into()
             } else if screen.battle.fled {
@@ -429,6 +493,13 @@ pub(super) fn draw(
             Action::Catch => {
                 text.0 = if screen.battle.is_wild {
                     choose("C  Poké Ball", "C  精灵球").into()
+                } else {
+                    "-".into()
+                };
+            }
+            Action::Bag => {
+                text.0 = if p.bag && screen.integrated && screen.battle.winner.is_none() {
+                    choose("I  Bag", "I  背包").into()
                 } else {
                     "-".into()
                 };

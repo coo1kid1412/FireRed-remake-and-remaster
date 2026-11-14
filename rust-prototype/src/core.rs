@@ -514,6 +514,106 @@ impl Bag {
         true
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MedicineError {
+    Unsupported,
+    NoTarget,
+    OutOfStock,
+    NoEffect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MedicineChange {
+    pub restored_hp: u16,
+    pub cured_status: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Medicine {
+    hp: u16,
+    status: u32,
+    revives: bool,
+    confusion: bool,
+}
+
+impl Medicine {
+    /// The standard medicines in data/pokemon/item_effects.h.
+    pub fn from_item(data: &Data, item: u16) -> Option<Self> {
+        const POISON: u32 = 0xf88; // poison, toxic and toxic counter
+        const ALL: u32 = 0xfff;
+        let id = data.items.get(&item)?.fields.get("itemId")?.as_str()?;
+        let (hp, status, revives) = match id {
+            "ITEM_POTION" => (20, 0, false),
+            "ITEM_SUPER_POTION" => (50, 0, false),
+            "ITEM_HYPER_POTION" => (200, 0, false),
+            "ITEM_MAX_POTION" => (u16::MAX, 0, false),
+            "ITEM_FULL_RESTORE" => (u16::MAX, ALL, false),
+            "ITEM_ANTIDOTE" => (0, POISON, false),
+            "ITEM_BURN_HEAL" => (0, 1 << 4, false),
+            "ITEM_ICE_HEAL" => (0, 1 << 5, false),
+            "ITEM_AWAKENING" => (0, 7, false),
+            "ITEM_PARALYZE_HEAL" => (0, 1 << 6, false),
+            "ITEM_FULL_HEAL" => (0, ALL, false),
+            "ITEM_REVIVE" => (0, 0, true),
+            "ITEM_MAX_REVIVE" => (u16::MAX, 0, true),
+            "ITEM_FRESH_WATER" => (50, 0, false),
+            "ITEM_SODA_POP" => (60, 0, false),
+            "ITEM_LEMONADE" => (80, 0, false),
+            "ITEM_MOOMOO_MILK" => (100, 0, false),
+            "ITEM_BERRY_JUICE" => (20, 0, false),
+            "ITEM_LAVA_COOKIE" => (0, ALL, false),
+            _ => return None,
+        };
+        Some(Self { hp, status, revives, confusion: status == ALL })
+    }
+
+    /// Apply to snapshots so a failed use leaves both the target and the bag intact.
+    pub fn use_from(
+        self,
+        data: &Data,
+        bag: &mut Bag,
+        item: u16,
+        hp: &mut u16,
+        max_hp: u16,
+        status: &mut u32,
+        status2: Option<&mut u32>,
+    ) -> Result<MedicineChange, MedicineError> {
+        if !bag.has(data, item, 1) {
+            return Err(MedicineError::OutOfStock);
+        }
+        if self.revives != (*hp == 0) {
+            return Err(MedicineError::NoEffect);
+        }
+        let amount = if self.revives && self.hp == 0 { (max_hp / 2).max(1) } else { self.hp };
+        let new_hp = hp.saturating_add(amount).min(max_hp);
+        let new_status = *status & !self.status;
+        let old_volatile = status2.as_deref().copied().unwrap_or(0);
+        let mut new_volatile = old_volatile;
+        if self.confusion {
+            new_volatile &= !7;
+        }
+        if *status & 7 != 0 && new_status & 7 == 0 {
+            new_volatile &= !(1 << 27); // nightmare ends when sleep is cured
+        }
+        let change = MedicineChange {
+            restored_hp: new_hp.saturating_sub(*hp),
+            cured_status: new_status != *status || new_volatile != old_volatile,
+        };
+        if change.restored_hp == 0 && !change.cured_status {
+            return Err(MedicineError::NoEffect);
+        }
+        if !bag.remove(data, item, 1) {
+            return Err(MedicineError::OutOfStock);
+        }
+        *hp = new_hp;
+        *status = new_status;
+        if let Some(status2) = status2 {
+            *status2 = new_volatile;
+        }
+        Ok(change)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Events {
     pub flags: Vec<u8>,
@@ -636,6 +736,14 @@ pub struct FieldPoison {
     pub fainted: Vec<usize>,
 }
 impl State {
+    pub fn use_medicine(
+        &mut self, data: &Data, item: u16, target: usize,
+    ) -> Result<MedicineChange, MedicineError> {
+        let medicine = Medicine::from_item(data, item).ok_or(MedicineError::Unsupported)?;
+        let mon = self.party.get_mut(target).ok_or(MedicineError::NoTarget)?;
+        medicine.use_from(data, &mut self.bag, item, &mut mon.hp, mon.stats[0], &mut mon.status, None)
+    }
+
     /// event_data.c:EnableNationalPokedex/IsNationalPokedexEnabled keeps three
     /// redundant markers and requires all of them when reading the state.
     pub fn enable_national_pokedex(&mut self) -> Result<(), String> {
@@ -850,7 +958,7 @@ impl State {
 #[cfg(test)]
 mod repel_tests {
     use super::{
-        BoxPokemon, Data, Events, GiveMonResult, IN_BOX_COUNT, OtId, Pokemon, State,
+        BoxPokemon, Data, Events, GiveMonResult, IN_BOX_COUNT, MedicineError, OtId, Pokemon, State,
         TOTAL_BOXES_COUNT, species_to_national_dex,
     };
 
@@ -865,6 +973,41 @@ mod repel_tests {
         assert!(events.update_repel_counter(false, false).unwrap());
         assert!(!events.update_repel_counter(false, false).unwrap());
         assert_eq!(events.var_get(0x4020).unwrap(), 0);
+    }
+
+    #[test]
+    fn medicine_uses_the_selected_party_member_and_consumes_only_on_effect() {
+        let data = Data::source();
+        let mut state = State::new(&data, 42, 1234);
+        let mon = Pokemon::create(
+            &data, &mut state.rng, data.ids["SPECIES_CHARMANDER"], 15, 31,
+            Some(0), OtId::Player, state.trainer_id,
+        ).unwrap();
+        state.party = vec![mon.clone(), mon];
+        let potion = data.ids["ITEM_POTION"];
+        let antidote = data.ids["ITEM_ANTIDOTE"];
+        let revive = data.ids["ITEM_REVIVE"];
+        for item in [potion, antidote, revive] {
+            assert!(state.bag.add(&data, &mut state.events, item, 2));
+        }
+
+        assert_eq!(state.use_medicine(&data, potion, 1), Err(MedicineError::NoEffect));
+        state.party[1].hp = 1;
+        let change = state.use_medicine(&data, potion, 1).unwrap();
+        assert_eq!(change.restored_hp, 20);
+        assert_eq!(state.party[1].hp, 21);
+        assert_eq!(state.party[0].hp, state.party[0].stats[0]);
+        assert!(!state.bag.has(&data, potion, 2));
+        state.party[1].hp = 0;
+        assert_eq!(state.use_medicine(&data, potion, 1), Err(MedicineError::NoEffect));
+        assert!(state.bag.has(&data, potion, 1));
+        assert_eq!(state.use_medicine(&data, revive, 1).unwrap().restored_hp, state.party[1].stats[0] / 2);
+        state.party[1].status = (1 << 7) | (3 << 8);
+        assert!(state.use_medicine(&data, antidote, 1).unwrap().cured_status);
+        assert_eq!(state.party[1].status, 0);
+        state.party[1].hp = state.party[1].stats[0] - 2;
+        assert_eq!(state.use_medicine(&data, potion, 1).unwrap().restored_hp, 2);
+        assert_eq!(state.use_medicine(&data, potion, 1), Err(MedicineError::OutOfStock));
     }
 
     #[test]

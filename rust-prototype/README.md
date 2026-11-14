@@ -66,7 +66,7 @@ shortened or substituted.
 
 This remains a partial baseline. No egg/cycling/forced-avatar state, surfing,
 roamers, Unown/header overrides or Tower ghost/Safari initialization. Full battle
-mechanics, complete trainer parties/switching/prize dialogue, a ball-selection bag UI, Safari Ball battle setup,
+mechanics, complete trainer parties/switching/prize dialogue, Safari Ball battle setup,
 PC management/withdrawal, Pokédex screens, remaining field step counters and the full whiteout recovery cutscene remain incomplete. Free/diagonal movement is experimental;
 new encounter behavior is UNVERIFIED against original C/frame timing. Headless
 library checks and packaged --check exercise the native walking/Repel bridge.
@@ -90,7 +90,14 @@ Run `run.bat` or `output/FireRed Native 3D Prototype.exe`.
 - Escape releases the cursor; click to capture it again. R resets the view.
 - Q / E also orbit the camera. No zoom controls.
 - Tab (or F1): settings; 1 toggles orbit, 2 toggles smoothing, 3 switches third-person/classic view, 4 toggles diagonal grid movement, 5 toggles free movement, 6 toggles original textures, 7 toggles music, 8 toggles wild and trainer battles, V toggles Red's imported playable model; saved in output/config.ini.
-- B: open the isolated opening rival battle. In a walking wild battle, 1-4 use moves, C throws one Poke Ball from the native bag, and 5 tries to run. Buttons also accept mouse clicks. R restarts only the fixed rival fixture; Escape returns after a world battle is resolved.
+- B opens the isolated opening rival battle. In a wild battle, 1–4 use moves,
+  C throws one standard Poké Ball with a capture animation, and 5 tries to run.
+  K in Settings controls visual effects. Escape returns after the battle is resolved.
+- I opens the bag during exploration or an integrated battle. Use left and right
+  to switch pockets, up and down to select an item or target, and Enter to confirm.
+  In a wild battle, choose a ball in the Poké Balls pocket to throw it. A Potion
+  restores up to 20 HP to a conscious Pokémon. Using medicine in battle spends a
+  turn. J in Settings controls the bag. The UI also accepts mouse clicks.
 - Escape closes dialogue/settings/battle, releases the cursor, then quits when already released. Music is optional (Tab then 7), off by default. Exploration music pauses during the battle; battle audio is not implemented.
 
 ## What is authentic, and what is unfinished

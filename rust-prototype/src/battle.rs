@@ -880,6 +880,14 @@ fn choose_with_scripts(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BallThrow {
+    pub ball: u16,
+    /// The caught case rolls four successes and displays three shakes.
+    pub shakes: u8,
+    pub caught: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Battle {
     pub mons: [Mon; 2],
@@ -906,6 +914,8 @@ pub struct Battle {
     /// FireRed side timers: zero is inactive; Safeguard is initialized to five.
     #[serde(default)]
     pub safeguard_turns: [u8; 2],
+    #[serde(skip)]
+    pub last_throw: Option<BallThrow>,
 }
 impl Battle {
     fn move_power(&self, mv: &Move) -> u16 {
@@ -1022,6 +1032,7 @@ impl Battle {
             run_tries: 0,
             catch_context: CatchContext::default(),
             safeguard_turns: [0; 2],
+            last_throw: None,
         }
     }
     pub fn from_matchup(data: &Data, player_mon: Mon, rival_mon: Mon, seed: u32) -> Self {
@@ -1051,6 +1062,7 @@ impl Battle {
             run_tries: 0,
             catch_context: CatchContext::default(),
             safeguard_turns: [0; 2],
+            last_throw: None,
         }
     }
     pub fn set_trainer(&mut self, name: &'static str) {
@@ -1097,6 +1109,7 @@ impl Battle {
             run_tries: 0,
             catch_context: CatchContext::default(),
             safeguard_turns: [0; 2],
+            last_throw: None,
         }
     }
     pub fn set_catch_context(&mut self, context: CatchContext) {
@@ -1133,7 +1146,7 @@ impl Battle {
             false
         }
     }
-    fn ball_multiplier(&self, ball: u16) -> Result<u32, String> {
+    pub fn ball_multiplier(&self, ball: u16) -> Result<u32, String> {
         Ok(match ball {
             1 => 10, // Master Ball success is forced after ordinary shake calculation.
             2 => 20,
@@ -1179,6 +1192,7 @@ impl Battle {
     }
     /// Cmd_handleballthrow regular single-battle branch. Returns whether caught.
     pub fn catch(&mut self, ball: u16) -> Result<bool, String> {
+        self.last_throw = None;
         if !self.is_wild {
             self.log.push("The trainer blocked the BALL!".into());
             return Ok(false);
@@ -1211,6 +1225,7 @@ impl Battle {
         if ball == 1 {
             shakes = 4;
         }
+        self.last_throw = Some(BallThrow { ball, shakes: shakes.min(3), caught: shakes == 4 });
         if shakes == 4 {
             self.mons[1].poke_ball = ball;
             self.caught = true;
@@ -2294,6 +2309,11 @@ mod tests {
         assert!(b2.catch(1).unwrap());
         assert!(b2.caught);
         assert_eq!(b2.winner, Some(0));
+        assert_eq!(b2.last_throw, Some(BallThrow { ball: 1, shakes: 3, caught: true }));
+        let mut failure = Battle::wild(&d, b2.mons[0].clone(), b2.mons[1].clone(), 0, 0);
+        assert!(!failure.catch(4).unwrap());
+        assert_eq!(failure.last_throw, Some(BallThrow { ball: 4, shakes: 0, caught: false }));
+        assert_eq!(failure.rng.calls, 0);
 
         // Trainer battle should reject flee and catch
         let mut trainer_b = Battle::new(&d, 0x3333);

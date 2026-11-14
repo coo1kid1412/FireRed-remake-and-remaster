@@ -173,8 +173,8 @@ pub(super) fn hud_style(
         // Only the latest lines; the full log stays in the battle state.
         for (_, mut text, _) in &mut log {
             let lines: Vec<&str> = text.0.lines().collect();
-            if lines.len() > 2 {
-                text.0 = lines[lines.len() - 2..].join("\n");
+            if lines.len() > 3 {
+                text.0 = [lines[0], lines[lines.len() - 2], lines[lines.len() - 1]].join("\n");
             }
         }
     }

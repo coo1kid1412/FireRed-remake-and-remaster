@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
+mod bag_screen;
 mod battle_screen;
+mod capture_fx;
 mod battle_stage;
 mod letsgo_material;
 mod field_screen;
@@ -45,6 +47,7 @@ struct Preferences {
     pokemon_models: bool,
     letsgo_scenery: bool,
     effects: bool,
+    bag: bool,
     quick_start: bool,
     battle_3d: bool,
     letsgo_shading: bool,
@@ -80,6 +83,7 @@ impl Preferences {
             pokemon_models: !ini.contains("pokemon_models=0"),
             letsgo_scenery: !ini.contains("letsgo_scenery=0"),
             effects: !ini.contains("effects=0"),
+            bag: !ini.contains("bag=0"),
             quick_start: !ini.contains("quick_start=0"),
             battle_3d: !ini.contains("battle_3d=0"),
             letsgo_shading: !ini.contains("letsgo_shading=0"),
@@ -118,7 +122,7 @@ impl Preferences {
         let text = format!("{text}character_animation={}\ntrainer_models={}\npokemon_models={}\n", u8::from(self.character_animation), u8::from(self.trainer_models), u8::from(self.pokemon_models));
         let text = format!("{text}letsgo_scenery={}\neffects={}\nquick_start={}\nbattle_3d={}\nletsgo_shading={}\n", u8::from(self.letsgo_scenery), u8::from(self.effects), u8::from(self.quick_start), u8::from(self.battle_3d), u8::from(self.letsgo_shading));
         let language = if self.zh { "zh-CN" } else { "en" };
-        let text = format!("{text}language={language}\n");
+        let text = format!("{text}language={language}\nbag={}\n", u8::from(self.bag));
         if let Err(e) = std::fs::write(&self.path, text) {
             eprintln!("Cannot save prototype settings: {e}");
         }
@@ -177,7 +181,9 @@ fn main() {
         persistence::check_world(&world, &base).expect("Native field startup/integration");
         field_screen::check_walking(&world).expect("Native walking encounters/Repel integration");
         firered_native_prototype::actors::check(&world).expect("Native actors startup/integration");
-        println!("Native field, walking encounters, trainer battles and actor integration passed.");
+        capture_fx::check(&world).expect("Capture animation integration");
+        bag_screen::check(&world).expect("Battle medicine integration");
+        println!("Native field, encounters, trainer battles, capture and medicine integration passed.");
         if args.iter().any(|v| v == "--logic-only") {
             return;
         }
@@ -407,6 +413,7 @@ fn main() {
         .insert_resource(field)
         .insert_resource(persistence)
         .insert_resource(battle)
+        .init_resource::<bag_screen::BagScreen>()
         .insert_resource(battle_screen::Replay::new(
             battle_smoke,
             base.join("battle-smoke-result.json"),
@@ -496,7 +503,7 @@ fn main() {
         })
         .add_systems(Startup, presentation::setup)
         .add_systems(Startup, models::setup)
-        .add_systems(Startup, battle_screen::setup)
+        .add_systems(Startup, (battle_screen::setup, bag_screen::setup, capture_fx::setup))
         .add_systems(Startup, battle_stage::setup)
         .add_plugins(MaterialPlugin::<letsgo_material::FieldMaterial>::default())
         .init_resource::<letsgo_material::LgImages>()
@@ -506,12 +513,8 @@ fn main() {
             (
                 (story_bot::run, smoke::replay).chain(),
                 battle_screen::replay,
-                field_screen::replay,
-                input,
-                (slice_start::update, slice_start::auto).chain(),
-                battle_screen::controls,
-                advance,
-                field_screen::update,
+                (field_screen::replay, slice_start::preview_item, bag_screen::input, input, slice_start::update, slice_start::auto).chain(),
+                (battle_screen::controls, advance, field_screen::update, capture_fx::tick).chain(),
                 persistence::update,
                 presentation::rebuild,
                 presentation::animate,
@@ -521,7 +524,7 @@ fn main() {
                 models::update,
                 music::update,
                 hud,
-                (battle_screen::draw, battle_stage::hud_style).chain(),
+                (battle_screen::draw, battle_stage::hud_style, bag_screen::draw, capture_fx::draw).chain(),
                 (locale::apply_font, font_safe_text).chain(),
                 capture_frame,
             )
@@ -543,7 +546,15 @@ fn input(
     mut battle: ResMut<battle_screen::Screen>,
     mut field: ResMut<field_screen::Field>,
     mut session: ResMut<persistence::Session>,
+    bag: Res<bag_screen::BagScreen>,
 ) {
+    if bag.captured_input() {
+        s.controls = Input::default();
+        s.free_vector = [0., 0.];
+        window.1.visible = true;
+        window.1.grab_mode = CursorGrabMode::None;
+        return;
+    }
     if keys.just_pressed(KeyCode::F1) || keys.just_pressed(KeyCode::Tab) {
         p.menu = !p.menu;
         p.reset_pending = false;
@@ -560,7 +571,7 @@ fn input(
     }
     if keys.just_pressed(KeyCode::Escape) {
         if battle.active && !p.menu {
-            if !battle.integrated || battle.battle.winner.is_some() {
+            if battle.throw_animation.is_none() && (!battle.integrated || battle.battle.winner.is_some()) {
                 battle.active = false;
                 p.captured = false;
             }
@@ -704,6 +715,10 @@ fn input(
             p.battle_3d = !p.battle_3d;
             p.save();
         }
+        if keys.just_pressed(KeyCode::KeyJ) {
+            p.bag = !p.bag;
+            p.save();
+        }
         if keys.just_pressed(KeyCode::KeyK) {
             p.effects = !p.effects;
             p.save();
@@ -756,8 +771,9 @@ fn advance(
     battle: Res<battle_screen::Screen>,
     scenery: Res<models::Scenery>,
     field: Res<field_screen::Field>,
+    bag: Res<bag_screen::BagScreen>,
 ) {
-    if p.menu || battle.active {
+    if p.menu || battle.active || bag.captured_input() {
         return;
     }
     field.configure_interaction(&mut s.game, &p);
@@ -833,13 +849,13 @@ fn hud(
             let scenery = if scenery.scenes.is_empty() && !kit.ready { "未导入" } else { enabled(p.letsgo_scenery) };
             let reset = if p.reset_pending { "再次按 R 确认重置进度。旧存档会备份。" } else { "R  重置存档和进度" };
             format!(
-                "设置\n\n1  旋转镜头  {}     2  平滑移动  {}     3  第三人称镜头  {}\n4  斜向移动  {}     5  自由移动  {}     6  原版地表贴图  {}\n7  背景音乐  {}     8  野生与训练家对战  {}     9  本地存档（重启生效） {}\n0  原版剧情脚本（部分） {}     M  原版人物和剧情场景（部分） {}\nV  小赤模型  {}     A  人物动画  {}     T  训练家模型  {}     P  宝可梦模型  {}\nL  皮卡丘版场景  {}     K  画面特效  {}     G  3D 对战场景  {}\nY  快速开局  {}     H  场景着色  {}\n\nU  简体中文 / English     {reset}\nTab / F1 / Esc  关闭设置。设置自动保存。",
+                "设置\n\n1  旋转镜头  {}     2  平滑移动  {}     3  第三人称镜头  {}\n4  斜向移动  {}     5  自由移动  {}     6  原版地表贴图  {}\n7  背景音乐  {}     8  野生与训练家对战  {}     9  本地存档（重启生效） {}\n0  原版剧情脚本（部分） {}     M  原版人物和剧情场景（部分） {}\nV  小赤模型  {}     A  人物动画  {}     T  训练家模型  {}     P  宝可梦模型  {}\nL  皮卡丘版场景  {}     K  画面特效  {}     G  3D 对战场景  {}\nY  快速开局  {}     H  场景着色  {}     J  背包 {}\n\nU  简体中文 / English     {reset}\nTab / F1 / Esc  关闭设置。设置自动保存。",
                 enabled(p.orbit), enabled(p.smooth), enabled(p.third_person),
                 enabled(p.diagonal), enabled(p.free_move), enabled(p.source_art),
                 bgm, enabled(p.battle_slice), enabled(p.native_state),
                 enabled(p.field_scripts), enabled(p.actor_scenes), enabled(p.red_model),
                 enabled(p.character_animation), enabled(p.trainer_models), enabled(p.pokemon_models),
-                scenery, enabled(p.effects), enabled(p.battle_3d), enabled(p.quick_start), enabled(p.letsgo_shading),
+                scenery, enabled(p.effects), enabled(p.battle_3d), enabled(p.quick_start), enabled(p.letsgo_shading), enabled(p.bag),
             )
         } else if slice_start::needs_starter(&p, &session) && s.game.dialogue.is_none() {
             format!("{}  ·  试玩版\n选择你的伙伴    1 妙蛙种子    2 小火龙    3 杰尼龟\n可以探索真新镇和 1 号道路。草丛里有野生宝可梦。Tab 打开设置。", locale.map(map))
@@ -854,11 +870,12 @@ fn hud(
                 else if s.game.map == "viridian_forest" { "在草丛探索，或和森林里的捕虫少年交谈。" }
                 else if s.game.map == "pallet" { "向北前往 1 号道路。可以进屋、读告示牌，或与邻居交谈。" }
                 else { "" };
-            format!("{}  ·  试玩版\nWASD 移动    Shift 奔跑    空格 互动    鼠标 转动镜头    Esc 释放光标    Tab 设置    B 劲敌对战\n{hint}", locale.map(map))
+            let bag = if p.bag { "    I 背包" } else { "" };
+            format!("{}  ·  试玩版\nWASD 移动    Shift 奔跑    空格 互动    鼠标 转动镜头    Esc 释放光标    Tab 设置    B 劲敌对战{bag}\n{hint}", locale.map(map))
         }
     } else if p.menu {
         format!(
-            "SETTINGS\n\n1   Camera rotation: {}\n2   Smooth movement: {}\n3   Third-person mouse camera: {}\n4   Diagonal grid movement: {}\n5   Free movement: {}\n6   Original surface textures: {}\n7   Music: {}\n8   Wild and trainer battles: {}\n9   Native save/load (restart): {}\n0   Original field scripts (partial): {}\nV   Imported Red playable model: {}\n\nTab / F1 / Esc: close     Changes save automatically.",
+            "SETTINGS\n\n1   Camera rotation: {}\n2   Smooth movement: {}\n3   Third-person mouse camera: {}\n4   Diagonal grid movement: {}\n5   Free movement: {}\n6   Original surface textures: {}\n7   Music: {}\n8   Wild and trainer battles: {}\n9   Native save/load (restart): {}\n0   Original field scripts (partial): {}\nV   Imported Red playable model: {}\nJ   Bag: {}\nK   Effects: {}\n\nTab / F1 / Esc: close     Changes save automatically.",
             if p.orbit { "ON" } else { "OFF" },
             if p.smooth { "ON" } else { "OFF" },
             if p.third_person { "ON" } else { "OFF" },
@@ -869,7 +886,9 @@ fn hud(
             if p.battle_slice { "ON" } else { "OFF" },
             if p.native_state { "ON" } else { "OFF" },
             if p.field_scripts { "ON" } else { "OFF" },
-            if p.red_model { "ON" } else { "OFF" }
+            if p.red_model { "ON" } else { "OFF" },
+            if p.bag { "ON" } else { "OFF" },
+            if p.effects { "ON" } else { "OFF" },
         )
     } else if slice_start::needs_starter(&p, &session) && s.game.dialogue.is_none() {
         format!(
@@ -880,8 +899,9 @@ fn hud(
         format!("{name}\n\n{}\n\nSpace / Enter: continue", lines[*i])
     } else {
         format!(
-            "{}   |   NATIVE RUST SLICE\nWASD: move   Shift: run   Space: interact   Mouse: look   Esc: cursor   Tab: settings   B: rival battle\n{}",
+            "{}   |   NATIVE RUST SLICE\nWASD: move   Shift: run   Space: interact   Mouse: look   Esc: cursor   Tab: settings   B: rival battle{}\n{}",
             s.world.map(&s.game.map).name,
+            if p.bag { "   I: bag" } else { "" },
             if s.world.map(&s.game.map).indoor {
                 "Explore the rooms. Doors and stairs connect the original maps."
             } else if s.game.map == "route1" {

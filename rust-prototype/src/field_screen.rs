@@ -416,6 +416,7 @@ fn start_trainer_battle(
     battle.error.clear();
     battle.active = true;
     battle.integrated = true;
+    battle.party_slot = Some(party_slot);
     field.trainer_party_slot = party_slot;
     Ok(())
 }
@@ -802,6 +803,7 @@ pub(super) fn update(
                 // Persistence must wait for the world-party battle result.
                 simulation.game.script_locked = true;
                 field.wild_mon = Some(wild);
+                battle.party_slot = Some(party_slot);
                 field.wild_party_slot = party_slot;
                 field.waiting = Some(Host::WildBattle);
                 Ok(())
