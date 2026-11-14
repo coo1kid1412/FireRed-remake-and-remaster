@@ -12,7 +12,7 @@ import char2glb
 
 PACKS = {
     'red': 'tr0022_00_red', 'blue': 'tr0023_00_green', 'brock': 'tr0008_00_rock',
-    'youngster': 'tr0027_00_shortpants', 'camper': 'tr0034_00_boyscout', 'woman': 'tr0063_00_adultf',
+    'bug_catcher': 'tr0026_00_bugcatcher', 'youngster': 'tr0027_00_shortpants', 'camper': 'tr0034_00_boyscout', 'woman': 'tr0063_00_adultf',
     'fat_man': 'tr0066_00_fat', 'scientist': 'tr0086_00_nresearcher', 'clerk': 'tr0079_00_staffm',
     'girl': 'tr0084_00_juveniles', 'old_man': 'tr0064_00_oldm',
 }

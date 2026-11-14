@@ -8,8 +8,11 @@ import os, sys, json, shutil, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gfpak, char2glb, anim_names
 
-DEX = {'bulbasaur': 1, 'charmander': 4, 'squirtle': 7, 'pidgey': 16, 'rattata': 19}
-HEIGHT = {'bulbasaur': 0.7, 'charmander': 0.85, 'squirtle': 0.72, 'pidgey': 0.5, 'rattata': 0.45}
+DEX = {'bulbasaur': 1, 'charmander': 4, 'squirtle': 7, 'pidgey': 16, 'rattata': 19,
+       'caterpie': 10, 'metapod': 11, 'weedle': 13, 'kakuna': 14, 'spearow': 21, 'pikachu': 25, 'mankey': 56}
+HEIGHT = {'bulbasaur': 0.7, 'charmander': 0.85, 'squirtle': 0.72, 'pidgey': 0.5, 'rattata': 0.45,
+          'caterpie': 0.35, 'metapod': 0.6, 'weedle': 0.35, 'kakuna': 0.6,
+          'spearow': 0.4, 'pikachu': 0.55, 'mankey': 0.65}
 
 def main(romfs):
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,12 +38,18 @@ def main(romfs):
             'FieldIdle': p('fi01_wait', 'kw01_wait'),
         }
         missing = [k for k in ('Idle', 'Walk', 'Run') if clips[k] is None]
+        if missing and not named:
+            # Metapod has an eye animation in the config without a skeletal track.
+            # Recover the field loops from Origin travel as the trainer importer does.
+            clips.update({name: clip for name, (clip, _) in
+                          char2glb.find_clips(anim_names.names_and_files(files)[1]).items()})
+            missing = [name for name in missing if clips[name] is None]
         if missing:
             print(key, 'kept previous model, missing clips', missing, sorted(named)[:8]); continue
         dst = os.path.join(models, entry['file'].split('/', 1)[1])
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         tmp = dst + '.new'
-        info = char2glb.convert(pack, tmp, clips=clips, target_height=HEIGHT[key])
+        info = char2glb.convert(pack, tmp, clips=clips, target_height=HEIGHT[key], mirror_u=True)
         keep = os.path.join(os.path.dirname(dst), 'source', key + '_previous.glb')
         os.makedirs(os.path.dirname(keep), exist_ok=True)
         if os.path.exists(dst) and not os.path.exists(keep):

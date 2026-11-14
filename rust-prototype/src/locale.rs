@@ -205,9 +205,11 @@ impl Catalog {
             let id = format!("MOVE_{}", action.trim_end_matches('!').replace(' ', "_"));
             return format!("{}使出了{}！", self.species(who), self.move_name(&id));
         }
-        if let Some((who, partner)) = line.strip_prefix("RIVAL sent out ")
-            .and_then(|s| s.trim_end_matches('!').split_once("! Go, ")) {
-            return format!("劲敌派出了{}！上吧，{}！", self.species(who), self.species(partner));
+        if let Some((trainer, sent)) = line.split_once(" sent out ") {
+            if let Some((who, partner)) = sent.trim_end_matches('!').split_once("! Go, ") {
+                let trainer = match trainer { "RIVAL" => "劲敌", "SAMMY" => "捕虫少年萨米", name => name };
+                return format!("{trainer}派出了{}！上吧，{}！", self.species(who), self.species(partner));
+            }
         }
         if let Some((who, partner)) = line.strip_prefix("Wild ")
             .and_then(|s| s.trim_end_matches('!').split_once(" appeared! Go, ")) {
@@ -220,7 +222,7 @@ impl Catalog {
             return format!("这对{}没有效果……", self.species(who));
         }
         if let Some((who, result)) = line.split_once(" fainted. ") {
-            let result = match result { "You won!" => "你赢了！", "RIVAL won!" => "劲敌获胜！", _ => "野生宝可梦获胜！" };
+            let result = match result { "You won!" => "你赢了！", "RIVAL won!" => "劲敌获胜！", "The Trainer won!" => "对方训练家获胜！", _ => "野生宝可梦获胜！" };
             return format!("{}倒下了。{result}", self.species(who));
         }
         if let Some((who, xp)) = line.strip_suffix(" experience points!").and_then(|s| s.split_once(" gained ")) {

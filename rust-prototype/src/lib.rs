@@ -368,6 +368,7 @@ pub struct Game {
     pub motion: Option<Motion>,
     pub running_shoes: bool,
     pub field_scripts: bool,
+    pub trainer_scripts: std::sync::Arc<HashSet<String>>,
     pub script_locked: bool,
     pub pending_script: Option<(String, String)>,
     pub allow_diagonal: bool,
@@ -391,6 +392,7 @@ impl Game {
             motion: None,
             running_shoes: true,
             field_scripts: false,
+            trainer_scripts: Default::default(),
             script_locked: false,
             pending_script: None,
             allow_diagonal: false,
@@ -556,7 +558,7 @@ impl Game {
         }
         let m = world.map(&self.map);
         if let Some(n) = m.npcs.iter().find(|n| n.at == q) {
-            if self.field_scripts {
+            if self.field_scripts || self.trainer_scripts.contains(&n.script) {
                 self.pending_script = Some((n.script.clone(), n.name.clone()));
                 self.script_locked = true;
                 return;

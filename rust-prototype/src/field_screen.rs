@@ -1,17 +1,18 @@
 //! Presentation/interaction adapter for the original field VM. No guest CPU.
 use super::{persistence::Session, Preferences, Simulation};
 use bevy::prelude::*;
+use std::{collections::HashSet, sync::Arc};
 use firered_native_prototype::{
     actors::{Actors, Data as ActorData},
     core::State,
     field::{Data, Host, Step, Vm},
+    Cell,
 };
 
 /// heal_location.c:sWhiteoutRespawnHealCenterMapIdxs and
 /// SetWhiteoutRespawnWarpAndHealerNpc. Unsupported locations stay explicit until
 /// their source maps are imported.
 fn whiteout_respawn(id: u16) -> Result<(&'static str, firered_native_prototype::Cell), String> {
-    use firered_native_prototype::Cell;
     match id {
         1 => Ok(("home", Cell(8, 5))),
         2 => Ok(("viridian_center", Cell(7, 4))),
@@ -29,7 +30,7 @@ fn whiteout_respawn(id: u16) -> Result<(&'static str, firered_native_prototype::
 #[derive(Clone, Copy)]
 struct TrainerFixture {
     enemy_index: usize,
-    enemy_level: u16,
+    enemy_level: u8,
     species: &'static str,
     prize: u32,
 }
@@ -72,6 +73,7 @@ fn trainer_fixture(trainer: u16) -> Result<TrainerFixture, String> {
 #[derive(Resource)]
 pub(super) struct Field {
     data: Data,
+    trainer_scripts: Arc<HashSet<String>>,
     vm: Option<Vm>,
     before: Option<State>,
     name: String,
@@ -99,8 +101,21 @@ pub(super) struct Field {
 }
 impl Field {
     pub fn new(seed: u16) -> Self {
+        let data = Data::source();
+        let actor_data = ActorData::source();
+        let trainer_scripts = actor_data
+            .maps
+            .values()
+            .flat_map(|map| &map.objects)
+            .filter(|actor| actor.trainer_type != 0)
+            .filter_map(|actor| {
+                let trainer = Vm::start(&data, &actor.script).ok()?.peek_trainer(&data)?;
+                trainer_fixture(trainer).ok().map(|_| actor.script.clone())
+            })
+            .collect();
         Self {
-            data: Data::source(),
+            data,
+            trainer_scripts: Arc::new(trainer_scripts),
             vm: None,
             before: None,
             name: String::new(),
@@ -109,7 +124,7 @@ impl Field {
             message_ack: false,
             comparison: 0,
             actors: Actors::default(),
-            actor_data: ActorData::source(),
+            actor_data,
             fixture: None,
             entry: Default::default(),
             blocked: Default::default(),
@@ -127,6 +142,78 @@ impl Field {
             trainer_party_slot: 0,
         }
     }
+    pub fn configure_interaction(
+        &self,
+        game: &mut firered_native_prototype::Game,
+        prefs: &Preferences,
+    ) {
+        game.field_scripts = prefs.field_scripts;
+        if prefs.battle_slice && !Arc::ptr_eq(&game.trainer_scripts, &self.trainer_scripts) {
+            game.trainer_scripts = self.trainer_scripts.clone();
+        } else if !prefs.battle_slice && !game.trainer_scripts.is_empty() {
+            game.trainer_scripts = Default::default();
+        }
+    }
+
+    fn sight(&self, simulation: &mut Simulation, session: &Session) {
+        let game = &mut simulation.game;
+        if game.busy() || game.dialogue.is_some() || !session.state.party.iter().any(|p| p.hp > 0) {
+            return;
+        }
+        let Some(map) = self.actor_data.maps.get(&game.map) else {
+            return;
+        };
+        let visible = &simulation.world.map(&game.map).npcs;
+        for actor in &map.objects {
+            let same_elevation = actor.elevation == game.elevation
+                || actor.elevation == 0
+                || matches!(game.elevation, 0 | 15);
+            if !self.trainer_scripts.contains(&actor.script) || !same_elevation {
+                continue;
+            }
+            let Some(npc) = visible
+                .iter()
+                .find(|npc| npc.script == actor.script && !npc.invisible)
+            else {
+                continue;
+            };
+            let Some(trainer) = Vm::start(&self.data, &actor.script)
+                .ok()
+                .and_then(|vm| vm.peek_trainer(&self.data))
+            else {
+                continue;
+            };
+            if session.state.events.flag_get(0x500 + trainer) || self.blocked.contains(&actor.script) {
+                continue;
+            }
+            let facing = self.actors.displayed(actor.local_id).map_or_else(
+                || firered_native_prototype::actors::facing(actor.movement),
+                |(_, direction)| direction,
+            );
+            for d in 1..=i32::from(actor.trainer_sight) {
+                let from = npc.at.offset(Cell(facing.0 * (d - 1), facing.1 * (d - 1)));
+                let next = from.offset(facing);
+                if firered_native_prototype::collision(
+                    &simulation.world,
+                    &game.map,
+                    from,
+                    actor.elevation,
+                    facing,
+                ) != firered_native_prototype::Collision::None
+                {
+                    break;
+                }
+                if next == game.position {
+                    game.facing = Cell(-facing.0, -facing.1);
+                    simulation.free.yaw = (game.facing.0 as f32).atan2(game.facing.1 as f32);
+                    game.pending_script = Some((actor.script.clone(), npc.name.clone()));
+                    game.script_locked = true;
+                    return;
+                }
+            }
+        }
+    }
+
     pub fn active(&self) -> bool {
         self.vm.is_some()
     }
@@ -215,52 +302,6 @@ impl Field {
                     break;
                 }
             }
-            if address.is_none() {
-                for actor in &self.actors.actors {
-                    if !actor.present || actor.object.trainer_type == 0 {
-                        continue;
-                    }
-                    if let Ok(vm) = Vm::start(&self.data, &actor.object.script) {
-                        if let Some(trainer_id) = vm.peek_trainer(&self.data) {
-                            if session.state.events.flag_get(0x500 + trainer_id) {
-                                continue;
-                            }
-                        }
-                    }
-                    let mut sight = false;
-                    for d in 1..=actor.object.trainer_sight as i32 {
-                        let check_pos = firered_native_prototype::Cell(
-                            actor.at.0 + actor.facing.0 * d,
-                            actor.at.1 + actor.facing.1 * d,
-                        );
-                        if check_pos == simulation.game.position {
-                            sight = true;
-                            break;
-                        }
-                        let step = firered_native_prototype::Cell(
-                            actor.at.0 + actor.facing.0 * (d - 1),
-                            actor.at.1 + actor.facing.1 * (d - 1),
-                        );
-                        if firered_native_prototype::collision(
-                            &simulation.world,
-                            &map,
-                            step,
-                            actor.object.elevation,
-                            actor.facing,
-                        ) != firered_native_prototype::Collision::None
-                        {
-                            break;
-                        }
-                    }
-                    if sight {
-                        address = Some(self.data.label(&actor.object.script)?);
-                        // Make player face the trainer
-                        simulation.game.facing =
-                            firered_native_prototype::Cell(-actor.facing.0, -actor.facing.1);
-                        break;
-                    }
-                }
-            }
         }
         if let Some(p) = address {
             let label = self
@@ -318,14 +359,6 @@ fn start_trainer_battle(
     trainer: u16,
 ) -> Result<(), String> {
     let fixture = trainer_fixture(trainer)?;
-    let rival_mon = firered_native_prototype::battle::Mon::create_at_level(
-        &battle.data,
-        fixture.enemy_index,
-        fixture.enemy_level,
-        [0; 6],
-        [0; 6],
-        battle.data.rival_personality,
-    );
     let party_slot = session
         .state
         .party
@@ -338,21 +371,49 @@ fn start_trainer_battle(
         &session.state.party[party_slot],
     )?;
     let species = session.data.id(fixture.species)?;
-    session
-        .state
-        .pokedex
-        .set_seen(species, rival_mon.personality)?;
+    let early_rival = matches!(trainer, 326..=328);
+    let opponent = if early_rival {
+        firered_native_prototype::battle::Mon::create_at_level(
+            &battle.data,
+            fixture.enemy_index,
+            u16::from(fixture.enemy_level),
+            [0; 6],
+            [0; 6],
+            battle.data.rival_personality,
+        )
+    } else {
+        // CreateNPCTrainerParty: male single trainer, IV parameter 0,
+        // source character codes summed across SAMMY and WEEDLE.
+        let name_hash: u32 = b"SAMMYWEEDLE"
+            .iter()
+            .map(|&c| u32::from(c - b'A' + 0xbb))
+            .sum();
+        let personality = 0x88 + (name_hash << 8);
+        let mon = firered_native_prototype::core::Pokemon::create(
+            &session.data,
+            &mut session.state.rng,
+            species,
+            fixture.enemy_level,
+            0,
+            Some(personality),
+            firered_native_prototype::core::OtId::RandomNoShiny,
+            session.state.trainer_id,
+        )?;
+        firered_native_prototype::battle::Mon::from_pokemon(&battle.data, &session.data, &mon)?
+    };
+    session.state.pokedex.set_seen(species, opponent.personality)?;
     battle.battle = firered_native_prototype::battle::Battle::from_matchup(
         &battle.data,
         player_mon,
-        rival_mon,
+        opponent,
         session.state.rng.state,
     );
-    // The three Oak-lab rivals use the first-battle tutorial gates. Other
-    // source trainer fixtures use the ordinary accuracy and critical paths.
-    if matches!(trainer, 326..=328) {
+    if early_rival {
         battle.battle.flags = 0;
+    } else {
+        battle.battle.set_trainer("SAMMY");
     }
+    battle.error.clear();
     battle.active = true;
     battle.integrated = true;
     field.trainer_party_slot = party_slot;
@@ -386,7 +447,7 @@ pub(super) fn update(
     replay: Res<Replay>,
     mut battle: ResMut<super::battle_screen::Screen>,
 ) {
-    simulation.game.field_scripts = prefs.field_scripts;
+    field.configure_interaction(&mut simulation.game, &prefs);
     if prefs.menu {
         return;
     }
@@ -402,6 +463,13 @@ pub(super) fn update(
     ) {
         session.error = format!("Original map scene unavailable: {e}");
         return;
+    }
+    if prefs.battle_slice
+        && !replay.active
+        && !field.active()
+        && simulation.game.pending_script.is_none()
+    {
+        field.sight(&mut simulation, &session);
     }
     let started = if let Some((script, name)) = simulation.game.pending_script.take() {
         field.before = Some(session.state.clone());
@@ -525,6 +593,8 @@ pub(super) fn update(
                             simulation.game.map = map.into();
                             simulation.game.position = cell;
                             simulation.game.elevation = simulation.world.map(map).elevation(cell);
+                            simulation.free = firered_native_prototype::free::Controller::new(&simulation.game);
+                            simulation.dirty = true;
                             let recovery = if state.respawn == 1 {
                                 "RED scurried back home, protecting the exhausted and fainted Pokémon from further harm…"
                             } else {
@@ -628,7 +698,6 @@ pub(super) fn update(
             }
         }
         if walked
-            && prefs.field_scripts
             && prefs.battle_slice
             && !field.active()
             && !started
@@ -727,6 +796,7 @@ pub(super) fn update(
                     state.rng.state,
                 );
                 battle.battle.set_catch_context(catch_context);
+                battle.error.clear();
                 battle.active = true;
                 battle.integrated = true;
                 // Persistence must wait for the world-party battle result.
@@ -880,6 +950,8 @@ pub(super) fn update(
                                 simulation.game.position = cell;
                                 simulation.game.elevation =
                                     simulation.world.map(map).elevation(cell);
+                                simulation.free = firered_native_prototype::free::Controller::new(&simulation.game);
+                                simulation.dirty = true;
                                 let recovery = if respawn == 1 {
                                     "RED scurried back home, protecting the exhausted and fainted Pokémon from further harm…"
                                 } else {
@@ -931,7 +1003,7 @@ pub(super) fn update(
                     simulation.game.script_locked = false;
                     simulation.game.dialogue = None;
                     mirror(&session, &mut simulation.game);
-                    if prefs.actor_scenes {
+                    if prefs.actor_scenes && !field.actors.map.is_empty() {
                         session
                             .actors
                             .insert(field.actors.map.clone(), field.actors.templates());
@@ -1113,6 +1185,9 @@ pub(super) fn update(
                         trainer,
                         flags,
                     } => {
+                        if !prefs.battle_slice && !replay.active {
+                            return Err("Trainer battles are disabled".into());
+                        }
                         start_trainer_battle(&mut field, &mut battle, &mut session, trainer)?;
                         field.waiting = Some(Host::TrainerBattle {
                             mode,
@@ -1126,6 +1201,18 @@ pub(super) fn update(
                         "HealPlayerParty" => {
                             let Session { data, state, .. } = &mut *session;
                             state.heal_party(data)?;
+                        }
+                        "GetTrainerBattleMode" => {
+                            let vm = field.vm.as_ref().ok_or("Missing trainer script")?;
+                            session.state.events.var_set(destination.unwrap_or(0x800d), u16::from(vm.battle_mode))?;
+                        }
+                        "ShowTrainerIntroSpeech" => {
+                            let intro = field.vm.as_ref().and_then(|vm| vm.trainer_intro);
+                            if let Some(address) = intro {
+                                let pages = field.text(address, locale.as_deref().filter(|_| prefs.zh))?;
+                                simulation.game.dialogue = Some((field.name.clone(), pages, 0));
+                                field.message_ack = false;
+                            }
                         }
                         "GetQuestLogState" => {
                             let dest = destination.unwrap_or(0x800d);
@@ -1231,7 +1318,6 @@ pub(super) fn update(
                         }
                         "NullFieldSpecial"
                         | "PlayTrainerEncounterMusic"
-                        | "ShowTrainerIntroSpeech"
                         | "ChangePokemonNickname"
                         | "SetFlavorTextFlagFromSpecialVars"
                         | "QuestLog_CutRecording"
@@ -1332,7 +1418,7 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
     session.state.party.push(mon);
     session.state.events.var_set(0x4020, 1)?;
     let mut prefs = Preferences::load(Default::default());
-    prefs.field_scripts = true;
+    prefs.field_scripts = false;
     prefs.battle_slice = true;
     prefs.actor_scenes = false;
     prefs.music = false;
@@ -1394,6 +1480,7 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
     assert!(app.world().resource::<Simulation>().game.dialogue.is_some());
 
     // Force a successful rate roll to test the real battle bridge, not the UI replay bypass.
+    let mut caught = None;
     for supported in [true, false] {
         let mut field = Field::new(0);
         field.last_step_cell = Some(("route1".into(), before));
@@ -1409,7 +1496,9 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
             .unwrap()
             .slots
         {
-            slot.species = if supported { "Charmander" } else { "MISSING" }.into();
+            if !supported {
+                slot.species = "MISSING".into();
+            }
         }
         app.insert_resource(field);
         {
@@ -1430,7 +1519,13 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
         );
         if supported {
             assert!(app.world().resource::<Simulation>().game.script_locked);
-            assert!(app.world().resource::<Field>().wild_mon.is_some());
+            let wild = app.world().resource::<Field>().wild_mon.as_ref().unwrap();
+            let species = wild.species;
+            caught = Some(
+                app.world().resource::<super::battle_screen::Screen>().battle.mons[1].name.clone()
+            );
+            let core = &app.world().resource::<Session>().data;
+            assert!([core.id("SPECIES_PIDGEY")?, core.id("SPECIES_RATTATA")?].contains(&species));
             let context = app
                 .world()
                 .resource::<super::battle_screen::Screen>()
@@ -1441,8 +1536,8 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
             assert!(!context.target_previously_caught);
             let (world_rng_state, world_rng_calls) = {
                 let session = app.world().resource::<Session>();
-                assert!(session.state.pokedex.seen(4));
-                assert!(!session.state.pokedex.caught(4));
+                assert!(session.state.pokedex.seen(species));
+                assert!(!session.state.pokedex.caught(species));
                 (session.state.rng.state, session.state.rng.calls)
             };
             assert_eq!(
@@ -1477,7 +1572,7 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
                 session.state.rng.calls,
                 world_rng_calls + u64::from(resolved_rng_calls)
             );
-            assert!(session.state.pokedex.caught(4));
+            assert!(session.state.pokedex.caught(species));
             assert!(session.state.storage.boxes[0][0].is_some());
             assert_eq!(
                 session.state.storage.boxes[0][0]
@@ -1492,7 +1587,8 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
         }
     }
 
-    // Resolve another walking battle as a loss to cover the source whiteout bridge.
+    // Resolve a rematch with the species just caught as a loss.
+    let caught = caught.ok_or("Wild encounter did not record the caught species")?;
     let mut field = Field::new(0);
     field.last_step_cell = Some(("route1".into(), before));
     field.encounters.previous_behavior = map.behavior(target);
@@ -1507,7 +1603,7 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
         .unwrap()
         .slots
     {
-        slot.species = "Charmander".into();
+        slot.species = caught.clone();
     }
     app.insert_resource(field);
     {
@@ -1570,35 +1666,46 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
         session.state.party[0].held_item = amulet_coin;
         weedle
     };
-    let mut trainer_field = Field::new(0);
-    trainer_field.vm = Some(Vm::start(&trainer_field.data, "EventScript_Return")?);
-    trainer_field.waiting = Some(Host::TrainerBattle {
-        mode: 0,
-        trainer: 104,
-        flags: 0,
-    });
-    app.insert_resource(trainer_field);
-    app.world_mut()
-        .resource_mut::<Simulation>()
-        .game
-        .script_locked = true;
-    let started: Result<(), String> =
-        app.world_mut()
-            .resource_scope(|world, mut field: Mut<Field>| {
-                world.resource_scope(|world, mut battle: Mut<super::battle_screen::Screen>| {
-                    let mut session = world.resource_mut::<Session>();
-                    start_trainer_battle(&mut field, &mut battle, &mut session, 104)
-                })
-            });
-    started?;
+    let sammy = Cell(7, 22);
+    let talk_cell = Cell(7, 23);
+    let sammy_script = "ViridianForest_EventScript_Sammy";
+    app.insert_resource(Field::new(0));
     {
-        let session = app.world().resource::<Session>();
-        assert!(session.state.pokedex.seen(weedle));
+        let mut simulation = app.world_mut().resource_mut::<Simulation>();
+        simulation.game = Game::new(world, "viridian_forest");
+        simulation.game.position = talk_cell;
+        simulation.game.elevation = world.map("viridian_forest").elevation(simulation.game.position);
+        simulation.game.facing = Cell(0, -1);
     }
+    app.update();
+    assert!(app.world().resource::<Simulation>().game.dialogue.is_none()); // Outside vision.
+    let press = |app: &mut App| {
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Space);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset(KeyCode::Space);
+    };
+    let talk = |app: &mut App| {
+        let mut simulation = app.world_mut().resource_mut::<Simulation>();
+        let Simulation { game, world, free, .. } = &mut *simulation;
+        free.reset(game);
+        free.tick(game, world, [0., 0.], false, true);
+    };
+    talk(&mut app);
+    let simulation = app.world().resource::<Simulation>();
+    assert_eq!(simulation.game.pending_script.as_ref().unwrap().0, sammy_script);
+    app.update();
+    assert_eq!(
+        app.world().resource::<Simulation>().game.dialogue.as_ref().unwrap().1[0],
+        "Hey, wait up!\nWhat's the hurry? Why the rush?"
+    );
+    assert!(!app.world().resource::<super::battle_screen::Screen>().active);
+    press(&mut app);
     {
-        let mut battle = app
-            .world_mut()
-            .resource_mut::<super::battle_screen::Screen>();
+        let mut battle = app.world_mut().resource_mut::<super::battle_screen::Screen>();
+        assert!(battle.active && battle.integrated);
+        assert_eq!(battle.battle.trainer, Some("SAMMY"));
+        assert_eq!(battle.battle.mons[1].name, "Weedle");
+        assert_eq!(battle.battle.mons[1].level, 9);
         assert!(battle.battle.mons[0].double_prize);
         battle.battle.winner = Some(0);
         battle.active = false;
@@ -1606,11 +1713,42 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
     app.update();
     {
         let session = app.world().resource::<Session>();
+        assert!(session.state.pokedex.seen(weedle));
         assert_eq!(session.state.money, 1216);
-        assert_eq!(session.state.events.var_get(0x800d)?, 1);
         assert!(session.state.events.flag_get(0x500 + 104));
     }
     assert!(!app.world().resource::<Simulation>().game.script_locked);
+
+    // A beaten trainer keeps their source conversation and does not pay twice.
+    talk(&mut app);
+    app.update();
+    assert!(app.world().resource::<Simulation>().game.dialogue.as_ref().unwrap().1[0]
+        .starts_with("Sometimes, you can find stuff"));
+    assert!(!app.world().resource::<super::battle_screen::Screen>().active);
+    press(&mut app);
+    press(&mut app);
+    assert_eq!(app.world().resource::<Session>().state.money, 1216);
+
+    // Entering the source sight line also works with story scripts and actors off.
+    let sight_cell = sammy.offset(Cell(-2, 0));
+    {
+        let mut session = app.world_mut().resource_mut::<Session>();
+        session.state.events.flag_clear(0x500 + 104);
+    }
+    {
+        let mut simulation = app.world_mut().resource_mut::<Simulation>();
+        simulation.game.position = sight_cell;
+        simulation.game.elevation = world.map("viridian_forest").elevation(sight_cell);
+    }
+    app.update();
+    assert_eq!(app.world().resource::<Simulation>().game.facing, Cell(1, 0));
+    assert!(app.world().resource::<Simulation>().game.dialogue.is_some());
+    // Isolate the next trainer outcome test from the pending encounter.
+    {
+        let mut simulation = app.world_mut().resource_mut::<Simulation>();
+        simulation.game.dialogue = None;
+        simulation.game.position = talk_cell;
+    }
 
     // The lab rival is an early-rival battle with HEAL_AFTER. A loss resumes
     // its script, heals the selected party mon, sets the trainer flag and
@@ -1683,6 +1821,7 @@ pub(super) fn check_walking(world: &firered_native_prototype::World) -> Result<(
     // field_control_avatar.c runs the five-step poison counter before Repel and
     // encounter checks. A final poisoned party member follows FieldPoison into
     // the same source whiteout state/warp already used by battle losses.
+    app.world_mut().resource_mut::<Preferences>().field_scripts = true;
     let poison_from = Cell(7, 4);
     let poison_to = Cell(8, 4);
     let poison_loss = {

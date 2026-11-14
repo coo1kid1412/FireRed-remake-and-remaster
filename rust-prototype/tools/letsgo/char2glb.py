@@ -34,6 +34,51 @@ def char_extras(g, m, mat, texdir, base_tex):
                 rim_color=list(c.get('RimColor', (1, 1, 1))), base_color=[1, 1, 1],
                 deep_color=list(c.get('DeepShadowColor', (0.49, 0.52, 0.7))), scroll=[0] * 8)
 
+def fire_material(g, m, mat, texdir, extras, flip_v):
+    """Bake a translucent emissive flame for the standard glTF renderer."""
+    from PIL import Image
+
+    def mask(sampler, channel):
+        name = tex_name(m, mat, sampler)
+        path = os.path.join(texdir, name + '.png') if name else None
+        if path is None or not os.path.isfile(path):
+            return None
+        with Image.open(path) as im:
+            tile = im.convert('RGBA').resize((256, 256), Image.Resampling.BILINEAR)
+            return np.asarray(tile.getchannel(channel), dtype=np.float32) / 255
+
+    taper = mask('LerpTex', 'A')
+    streak = mask('Blend0Tex', 'R')
+    glow = mask('Blend1Tex', 'R')
+    if taper is None or streak is None or glow is None:
+        return None
+
+    # The lookup ramps from the root to the tip. Fade the tip and let
+    # the two grayscale detail maps break up the outline of the shell.
+    height = taper if flip_v else 1 - taper
+    root = 1 - height
+    detail = np.maximum(streak, glow)
+    color_mix = np.clip(0.85 * root + 0.25 * detail, 0, 1)[..., None]
+    red = np.asarray(extras['base_color'])
+    yellow = np.asarray(extras['deep_color'])
+    linear_rgb = red * (1 - color_mix) + yellow * color_mix
+    rgb = np.where(linear_rgb <= 0.0031308, 12.92 * linear_rgb,
+                   1.055 * linear_rgb ** (1 / 2.4) - 0.055)
+    alpha = np.clip(root * (0.64 + 0.8 * detail) + 0.2 * detail * height, 0, 1)
+    rgba = np.rint(np.dstack((rgb, alpha)) * 255).astype(np.uint8)
+
+    path = os.path.join(texdir, mat['name'] + '_gltf_flame.png')
+    Image.fromarray(rgba).save(path)
+    mid = g.material(mat['name'], path, False, False, None, extras)
+    out = g.j['materials'][mid]
+    out['alphaMode'] = 'BLEND'
+    out['emissiveTexture'] = dict(index=g.image(path))
+    out['emissiveFactor'] = [1.0, 1.0, 1.0]
+    # Keep a little scene lighting while letting emission set the color.
+    out['pbrMetallicRoughness']['baseColorFactor'] = [0.08, 0.08, 0.08, 1.0]
+    return mid
+
+
 def trs_matrix(t, q, s):
     x, y, z, w = q
     r = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -77,7 +122,7 @@ def travel_speed(a):
     (x0, _, z0), (x1, _, z1) = tr[0][1], tr[-1][1]
     return math.hypot(x1 - x0, z1 - z0) / max(1, a['frames'] - 1) * a['fps']
 
-def convert(pack, out, scale=0.01, texdir=None, clips=None, target_height=None, flip_v=True):
+def convert(pack, out, scale=0.01, texdir=None, clips=None, target_height=None, flip_v=True, mirror_u=False):
     """clips: optional {glTF clip name: parsed gfbanm}; default finds trainer Idle/Walk/Run.
     target_height: optional height in tiles; overrides scale (used for battle previews)."""
     files = gfpak.read(pack)
@@ -125,6 +170,10 @@ def convert(pack, out, scale=0.01, texdir=None, clips=None, target_height=None, 
     g.j['skins'] = [dict(joints=list(range(len(bones))), inverseBindMatrices=len(g.j['accessors']) - 1, skeleton=roots[0])]
     skin_list = [i for i, b in enumerate(bones) if not b['rigid']]
     mesh_nodes = []
+    mirrored_textures = set()
+    if mirror_u:
+        # Pokémon color atlases tile mirrored U across the two sides of the mesh.
+        g.j['samplers'].append(dict(g.j['samplers'][0], wrapS=33648))
     for grp in m['groups']:
         mesh = m['meshes'][grp['mesh']]
         n, cols = decode_vertices(mesh)
@@ -154,12 +203,18 @@ def convert(pack, out, scale=0.01, texdir=None, clips=None, target_height=None, 
         for poly in mesh['polys']:
             mat = m['materials'][poly['material']]
             tn = tex_name(m, mat, 'L0ColTex') or tex_name(m, mat, 'Col0Tex')
-            layer = tex_name(m, mat, 'LyCol0Tex')
             # the iris layer has its own UV transform; the colour map already has painted eyes
             ex = char_extras(g, m, mat, texdir, tn)
             if ex is None:
                 continue
-            mid = g.material(mat['name'], os.path.join(texdir, tn + '.png') if tn else None, False, False, None, ex)
+            if ex['kind'] == KIND_FIRE:
+                mid = fire_material(g, m, mat, texdir, ex, flip_v)
+                if mid is None:
+                    continue
+            else:
+                mid = g.material(mat['name'], os.path.join(texdir, tn + '.png') if tn else None, False, False, None, ex)
+                if mirror_u:
+                    mirrored_textures.update(tex for tex in ex['tex'][:3] if tex >= 0)
             pa = attrs
             su, sv = mat['values'].get('ColorUVScaleU', 1.0), mat['values'].get('ColorUVScaleV', 1.0)
             tu, tv = mat['values'].get('ColorUVTranslateU', 0.0), mat['values'].get('ColorUVTranslateV', 0.0)
@@ -170,11 +225,15 @@ def convert(pack, out, scale=0.01, texdir=None, clips=None, target_height=None, 
                 tuv = [(u, 1.0 - v if flip_v else v) for u, v in tuv]
                 pa = dict(attrs, TEXCOORD_0=g.acc(tuv, 'VEC2'))
             prims.append(dict(attributes=pa, indices=g.acc(poly['faces'], 'SCALAR', comp=5125, target=34963), material=mid))
+        if not prims:
+            continue
         g.j['meshes'].append(dict(name=bones[grp['bone']]['name'], primitives=prims))
         node = dict(name='mesh_' + bones[grp['bone']]['name'], mesh=len(g.j['meshes']) - 1)
         if 'JOINTS_0' in attrs: node['skin'] = 0
         g.j['nodes'].append(node)
         mesh_nodes.append(len(g.j['nodes']) - 1)
+    for tex in mirrored_textures:
+        g.j['textures'][tex]['sampler'] = 1
     if target_height:
         # size from the main body mesh only (Bulbasaur's vines stand upright in the bind pose)
         body = max((decode_vertices(m['meshes'][grp['mesh']])[1][0] for grp in m['groups']), key=len)

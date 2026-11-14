@@ -3,8 +3,8 @@
 Latest encounter integration (2026-10-09): regular land steps now use original
 metatile encounter attributes, including caves, with source cooldown/private rate
 RNG, main 16-bit slot/level draws, flute/Cleanse Tag/lead ability modifiers, and
-Repel expiration through EventScript_RepelWoreOff. Enabled with existing
-field_scripts and battle_slice settings. Initial placement and map entry do not
+Repel expiration through EventScript_RepelWoreOff. Wild encounters and supported
+trainers use the battle_slice setting (on by default). Initial placement and map entry do not
 roll encounters; map entry and battle start reset immunity. Private encounter
 state is transient (host session/reset seeds it); Repel vars retain existing saves.
 Native wild creation preserves source nature/personality/random-IV generation;
@@ -83,12 +83,14 @@ Run `run.bat` or `output/FireRed Native 3D Prototype.exe`.
 - WASD / arrows: movement. Shift: run outdoors.
 - Space / Enter: interact and advance dialogue.
 - Enter doors facing north; use stairs and the southern indoor exits.
-- North from Pallet Town leads to Route 1; south returns.
+- North from Pallet Town leads through Route 1 and Viridian City to Route 2 and
+  Viridian Forest. Talk to Bug Catcher Sammy or enter his line of sight in the
+  forest to battle his level 9 Weedle. See [encounter and trainer coverage](../docs/RUST-ENCOUNTERS.md).
 - Mouse: third-person look; WASD follows the camera continuously at any angle. Combine keys for diagonals; release them to stop between tiles.
 - Escape releases the cursor; click to capture it again. R resets the view.
 - Q / E also orbit the camera. No zoom controls.
-- Tab (or F1): settings; 1 toggles orbit, 2 toggles smoothing, 3 switches third-person/classic view, 4 toggles diagonal grid movement, 5 toggles free movement, 6 toggles original textures, 7 toggles music, 8 toggles the opening-battle slice, V toggles Red's imported playable model; saved in output/config.ini.
-- B: open the isolated opening rival battle. In a walking wild battle, 1-4 use moves, C throws one Poke Ball from the native bag, and 5 tries to run. Buttons also accept mouse clicks. R restarts only the fixed rival fixture; Escape returns after a wild battle is resolved.
+- Tab (or F1): settings; 1 toggles orbit, 2 toggles smoothing, 3 switches third-person/classic view, 4 toggles diagonal grid movement, 5 toggles free movement, 6 toggles original textures, 7 toggles music, 8 toggles wild and trainer battles, V toggles Red's imported playable model; saved in output/config.ini.
+- B: open the isolated opening rival battle. In a walking wild battle, 1-4 use moves, C throws one Poke Ball from the native bag, and 5 tries to run. Buttons also accept mouse clicks. R restarts only the fixed rival fixture; Escape returns after a world battle is resolved.
 - Escape closes dialogue/settings/battle, releases the cursor, then quits when already released. Music is optional (Tab then 7), off by default. Exploration music pauses during the battle; battle audio is not implemented.
 
 ## What is authentic, and what is unfinished

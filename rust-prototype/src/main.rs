@@ -177,6 +177,10 @@ fn main() {
         persistence::check_world(&world, &base).expect("Native field startup/integration");
         field_screen::check_walking(&world).expect("Native walking encounters/Repel integration");
         firered_native_prototype::actors::check(&world).expect("Native actors startup/integration");
+        println!("Native field, walking encounters, trainer battles and actor integration passed.");
+        if args.iter().any(|v| v == "--logic-only") {
+            return;
+        }
         for file in world
             .maps
             .iter()
@@ -354,6 +358,7 @@ fn main() {
         if v.len() == 3 {
             free.position = [v[0], v[1]];
             game.position = Cell(v[0].round() as i32, v[1].round() as i32);
+            game.elevation = world.map(&game.map).elevation(game.position);
             free.yaw = v[2];
             prefs.angle = v[2] + std::f32::consts::PI;
         }
@@ -555,7 +560,7 @@ fn input(
     }
     if keys.just_pressed(KeyCode::Escape) {
         if battle.active && !p.menu {
-            if !battle.battle.is_wild || battle.battle.winner.is_some() {
+            if !battle.integrated || battle.battle.winner.is_some() {
                 battle.active = false;
                 p.captured = false;
             }
@@ -572,7 +577,9 @@ fn input(
     if buttons.just_pressed(MouseButton::Left) && !p.menu {
         p.captured = true;
     }
-    if keys.just_pressed(KeyCode::KeyB) && !p.menu && p.battle_slice && !battle.active {
+    if keys.just_pressed(KeyCode::KeyB)
+        && !p.menu && p.battle_slice && !battle.active && !s.game.script_locked
+    {
         *battle = battle_screen::Screen::new(true);
     }
     let grab = p.third_person && p.captured && !p.menu && !battle.active && window.0.focused;
@@ -647,7 +654,7 @@ fn input(
             p.music = !p.music;
             p.save();
         }
-        if keys.just_pressed(KeyCode::Digit8) {
+        if keys.just_pressed(KeyCode::Digit8) && !(battle.active && battle.integrated) {
             p.battle_slice = !p.battle_slice;
             if !p.battle_slice {
                 battle.active = false;
@@ -748,10 +755,12 @@ fn advance(
     replay: Res<smoke::Replay>,
     battle: Res<battle_screen::Screen>,
     scenery: Res<models::Scenery>,
+    field: Res<field_screen::Field>,
 ) {
     if p.menu || battle.active {
         return;
     }
+    field.configure_interaction(&mut s.game, &p);
     let free_mode = p.free_move && p.third_person;
     if free_mode != s.free_active && !s.game.busy() {
         s.free = firered_native_prototype::free::Controller::new(&s.game);
@@ -824,7 +833,7 @@ fn hud(
             let scenery = if scenery.scenes.is_empty() && !kit.ready { "未导入" } else { enabled(p.letsgo_scenery) };
             let reset = if p.reset_pending { "再次按 R 确认重置进度。旧存档会备份。" } else { "R  重置存档和进度" };
             format!(
-                "设置\n\n1  旋转镜头  {}     2  平滑移动  {}     3  第三人称镜头  {}\n4  斜向移动  {}     5  自由移动  {}     6  原版地表贴图  {}\n7  背景音乐  {}     8  开场劲敌对战  {}     9  本地存档（重启生效） {}\n0  原版剧情脚本（部分） {}     M  原版人物和剧情场景（部分） {}\nV  小赤模型  {}     A  人物动画  {}     T  训练家模型  {}     P  宝可梦模型  {}\nL  皮卡丘版场景  {}     K  画面特效  {}     G  3D 对战场景  {}\nY  快速开局  {}     H  场景着色  {}\n\nU  简体中文 / English     {reset}\nTab / F1 / Esc  关闭设置。设置自动保存。",
+                "设置\n\n1  旋转镜头  {}     2  平滑移动  {}     3  第三人称镜头  {}\n4  斜向移动  {}     5  自由移动  {}     6  原版地表贴图  {}\n7  背景音乐  {}     8  野生与训练家对战  {}     9  本地存档（重启生效） {}\n0  原版剧情脚本（部分） {}     M  原版人物和剧情场景（部分） {}\nV  小赤模型  {}     A  人物动画  {}     T  训练家模型  {}     P  宝可梦模型  {}\nL  皮卡丘版场景  {}     K  画面特效  {}     G  3D 对战场景  {}\nY  快速开局  {}     H  场景着色  {}\n\nU  简体中文 / English     {reset}\nTab / F1 / Esc  关闭设置。设置自动保存。",
                 enabled(p.orbit), enabled(p.smooth), enabled(p.third_person),
                 enabled(p.diagonal), enabled(p.free_move), enabled(p.source_art),
                 bgm, enabled(p.battle_slice), enabled(p.native_state),
@@ -841,13 +850,15 @@ fn hud(
             else { format!("{name}\n\n{line}\n\n空格 / 回车  继续") }
         } else {
             let hint = if map.indoor { "用门和楼梯探索各个房间。" }
-                else if s.game.map == "route1" { "向南回到真新镇。可以和店员交谈，向南跳下台阶。" }
-                else { "向北前往 1 号道路。可以进屋、读告示牌，或与邻居交谈。" };
+                else if s.game.map == "route1" { "向北去常磐市，向南回真新镇。走进草丛可遇到野生宝可梦。" }
+                else if s.game.map == "viridian_forest" { "在草丛探索，或和森林里的捕虫少年交谈。" }
+                else if s.game.map == "pallet" { "向北前往 1 号道路。可以进屋、读告示牌，或与邻居交谈。" }
+                else { "" };
             format!("{}  ·  试玩版\nWASD 移动    Shift 奔跑    空格 互动    鼠标 转动镜头    Esc 释放光标    Tab 设置    B 劲敌对战\n{hint}", locale.map(map))
         }
     } else if p.menu {
         format!(
-            "SETTINGS\n\n1   Camera rotation: {}\n2   Smooth movement: {}\n3   Third-person mouse camera: {}\n4   Diagonal grid movement: {}\n5   Free movement: {}\n6   Original surface textures: {}\n7   Music: {}\n8   Opening rival battle slice: {}\n9   Native save/load (restart): {}\n0   Original field scripts (partial): {}\nV   Imported Red playable model: {}\n\nTab / F1 / Esc: close     Changes save automatically.",
+            "SETTINGS\n\n1   Camera rotation: {}\n2   Smooth movement: {}\n3   Third-person mouse camera: {}\n4   Diagonal grid movement: {}\n5   Free movement: {}\n6   Original surface textures: {}\n7   Music: {}\n8   Wild and trainer battles: {}\n9   Native save/load (restart): {}\n0   Original field scripts (partial): {}\nV   Imported Red playable model: {}\n\nTab / F1 / Esc: close     Changes save automatically.",
             if p.orbit { "ON" } else { "OFF" },
             if p.smooth { "ON" } else { "OFF" },
             if p.third_person { "ON" } else { "OFF" },

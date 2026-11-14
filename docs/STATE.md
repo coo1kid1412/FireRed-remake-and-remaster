@@ -3,6 +3,17 @@
 Hand-off note between sessions and tools. Update it when something changes.
 Last updated: 2026-10-10 (separate Rust prototype; installed C++ game unchanged).
 
+## Intel macOS encounter and battle rendering update (2026-11-14)
+
+- Pokémon color atlases use mirrored U sampling. Charmander's ordinary glTF
+  renderer now uses a translucent emissive tail flame. Its angular white body
+  patches and opaque tail geometry are gone from the Intel Metal capture.
+- Land encounters work with story scripts off. Bug Catcher Sammy uses his source
+  intro, Lv.9 Weedle, prize and beaten dialogue through both interaction and sight.
+  Added local models for early-route species and the Bug Catcher.
+- See [encounter and trainer coverage](RUST-ENCOUNTERS.md) for the rollout.
+  Run `--check --logic-only` for the host integration without optional asset packs.
+
 ## Intel macOS Simplified Chinese and classic BGM
 
 - The Rust prototype uses a local Simplified Chinese catalog from the pinned
@@ -46,7 +57,7 @@ Last updated: 2026-10-10 (separate Rust prototype; installed C++ game unchanged)
 
 ## Playable slice quick start (2026-10-10)
 
-Settings Y / `quick_start` (default 1): with an empty party the HUD asks for a starter (1 Bulbasaur, 2 Charmander, 3 Squirtle). `src/slice_start.rs` gives it at Lv5 (source CreateMon path), 5 Poke Balls + 3 Potions, FLAG_SYS_POKEMON_GET/POKEDEX_GET and the post-Pokedex scene vars (0x4050=1, 0x4055=6, 0x4057=2, 0x4051=1, 0x4058=1, 0x4054=1) plus lab hide flags, so Oak's escort/lab/parcel story is skipped. Route 1 grass encounters, wild battles, catching, fleeing and whiteout use the existing native systems (needs field_scripts=1 + battle_slice=1, already in Ben's config). UI text drops accents the font lacks. QA: `--route --at 6 33 1.5708 --slice-auto --field-scripts --capture <png>` walks the grass until a wild battle (Pidgey Lv4 after ~1700 frames) and captures it. Deployed exe SHA256 5A704686BB820007C9E3B0A86D7D3E4D5F8A8299F36C7474683ABFD7448755DE.
+Settings Y / `quick_start` (default 1): with an empty party the HUD asks for a starter (1 Bulbasaur, 2 Charmander, 3 Squirtle). `src/slice_start.rs` gives it at Lv5 (source CreateMon path), 5 Poke Balls + 3 Potions, FLAG_SYS_POKEMON_GET/POKEDEX_GET and the post-Pokedex scene vars (0x4050=1, 0x4055=6, 0x4057=2, 0x4051=1, 0x4058=1, 0x4054=1) plus lab hide flags, so Oak's escort/lab/parcel story is skipped. Route 1 grass encounters, wild battles, catching, fleeing and whiteout use the existing native systems (now only needs battle_slice=1). UI text drops accents the font lacks. QA: `--route --at 6 33 1.5708 --slice-auto --capture <png>` walks the grass until a wild battle (Pidgey Lv4 after ~1700 frames) and captures it. Deployed exe SHA256 5A704686BB820007C9E3B0A86D7D3E4D5F8A8299F36C7474683ABFD7448755DE.
 
 ## Let's Go world pass 2 (2026-10-10)
 

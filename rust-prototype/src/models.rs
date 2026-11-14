@@ -142,6 +142,7 @@ pub(super) fn npc_key(graphics: &str) -> Option<&'static str> {
         "OBJ_EVENT_GFX_BROCK" => "brock",
         "OBJ_EVENT_GFX_YOUNGSTER" | "OBJ_EVENT_GFX_BOY" => "youngster",
         "OBJ_EVENT_GFX_CAMPER" => "camper",
+        "OBJ_EVENT_GFX_BUG_CATCHER" => "bug_catcher",
         "OBJ_EVENT_GFX_WOMAN_1" | "OBJ_EVENT_GFX_WOMAN_2" | "OBJ_EVENT_GFX_WOMAN_3" => "woman",
         "OBJ_EVENT_GFX_FAT_MAN" => "fat_man",
         "OBJ_EVENT_GFX_SCIENTIST" => "scientist",

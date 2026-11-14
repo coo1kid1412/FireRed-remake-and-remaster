@@ -332,6 +332,8 @@ pub(super) fn draw(
     for mut text in &mut headers {
         text.0 = if screen.battle.is_wild {
             choose("WILD POKÉMON BATTLE  |  NATIVE RUST", "野生宝可梦对战").into()
+        } else if screen.battle.trainer.is_some() {
+            choose("TRAINER BATTLE", "训练家对战").into()
         } else {
             choose("FIRST RIVAL BATTLE  |  NATIVE RUST", "初次劲敌对战").into()
         };
@@ -340,7 +342,7 @@ pub(super) fn draw(
         text.0 = if screen.battle.is_wild {
             choose("Wild battle. Throw Poké Balls with [C], fight with [1-4], or flee with [5].", "按 C 投出精灵球，按 1–4 选择招式，按 5 逃跑。").into()
         } else {
-            choose("Original FireRed trainer AI and four opening moves. Fixed test starter and random seed.", "按 1–4 选择招式。").into()
+            choose("Choose a move [1-4].", "按 1–4 选择招式。").into()
         };
     }
     for (label, mut text) in &mut labels {
@@ -381,9 +383,9 @@ pub(super) fn draw(
             } else if screen.battle.fled {
                 choose("Got away safely! Press Esc to return to field", "顺利逃跑了！按 Esc 返回地图。").into()
             } else if screen.battle.winner == Some(0) {
-                choose("Battle ended - You won! Press Esc or R to return", "对战胜利！按 Esc 返回。").into()
+                choose("Battle ended - You won! Press Esc to return", "对战胜利！按 Esc 返回。").into()
             } else {
-                choose("Battle ended - Defeated! Press Esc or R to return", "对战失败。按 Esc 返回。").into()
+                choose("Battle ended - Defeated! Press Esc to return", "对战失败。按 Esc 返回。").into()
             }
         } else if p.zh {
             if screen.battle.turn > 0 {
@@ -396,17 +398,19 @@ pub(super) fn draw(
                 "请选择招式。".into()
             }
         } else if let Some(_ai) = &screen.battle.last_ai {
-            format!(
-                "Turn {}   |   Enemy move used   |   Choose your move [1-4], Catch [C], or Run [5]",
-                screen.battle.turn,
-            )
+            let actions = if screen.battle.is_wild {
+                "Choose a move [1-4], Catch [C], or Run [5]"
+            } else {
+                "Choose a move [1-4]"
+            };
+            format!("Turn {}   |   {actions}", screen.battle.turn)
         } else if screen.battle.is_wild {
             format!(
                 "Wild {} appeared! Lv. {}. Catch with [C] or attack with [1-4].",
                 screen.battle.mons[1].name, screen.battle.mons[1].level
             )
         } else {
-            choose("Charmander: Hardy, IVs 31 / EVs 0. Rival Squirtle: original trainer-generated stats.", "轮到你行动。请选择招式。").into()
+            choose("Choose a move.", "轮到你行动。请选择招式。").into()
         };
     }
     for (label, mut text) in &mut buttons {

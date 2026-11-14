@@ -675,6 +675,16 @@ fn effective_speed(mon: &Mon) -> u32 {
 /// BattleAI_SetupAIData / BattleAI_ChooseMoveOrAction / original script order.
 /// The duplicate candidate when a later slot becomes best is retained from C.
 pub fn choose(data: &Data, user: &Mon, foe: &Mon, rng: &mut Rng) -> Result<AiDecision, String> {
+    choose_with_scripts(data, &data.ai_roots, user, foe, rng)
+}
+
+fn choose_with_scripts(
+    data: &Data,
+    scripts: &[String],
+    user: &Mon,
+    foe: &Mon,
+    rng: &mut Rng,
+) -> Result<AiDecision, String> {
     let mut scores = [0; 4];
     let simulated = std::array::from_fn(|_| 100 - rng.next() % 16);
     for i in 0..user.moves.len() {
@@ -682,7 +692,7 @@ pub fn choose(data: &Data, user: &Mon, foe: &Mon, rng: &mut Rng) -> Result<AiDec
             scores[i] = 100;
         }
     }
-    for root in &data.ai_roots {
+    for root in scripts {
         for slot in 0..user.moves.len() {
             if user.pp[slot] == 0 {
                 scores[slot] = 0;
@@ -881,6 +891,8 @@ pub struct Battle {
     pub last_ai: Option<AiDecision>,
     #[serde(default)]
     pub is_wild: bool,
+    #[serde(skip)]
+    pub trainer: Option<&'static str>,
     #[serde(default)]
     pub caught: bool,
     #[serde(default)]
@@ -1003,6 +1015,7 @@ impl Battle {
                 "OAK: A battle is won by reducing your opponent's HP to zero.".into(),
             ],
             is_wild: false,
+            trainer: None,
             caught: false,
             fled: false,
             catch_rate: 0,
@@ -1031,6 +1044,7 @@ impl Battle {
                 "OAK: A battle is won by reducing your opponent's HP to zero.".into(),
             ],
             is_wild: false,
+            trainer: None,
             caught: false,
             fled: false,
             catch_rate: 0,
@@ -1039,6 +1053,27 @@ impl Battle {
             safeguard_turns: [0; 2],
         }
     }
+    pub fn set_trainer(&mut self, name: &'static str) {
+        self.trainer = Some(name);
+        let [player, opponent] = &self.mons;
+        self.log = vec![format!(
+            "{name} sent out {}! Go, {}!",
+            opponent.name.to_ascii_uppercase(),
+            player.name.to_ascii_uppercase(),
+        )];
+    }
+
+    fn opponent_move(&mut self, data: &Data) -> Result<AiDecision, String> {
+        // The current ordinary trainer has AI_SCRIPT_CHECK_BAD_MOVE.
+        let scripts = if self.trainer.is_some() {
+            data.ai_roots.get(..1).filter(|roots| roots[0] == "AI_CheckBadMove")
+                .ok_or("Missing AI_CheckBadMove script")?
+        } else {
+            &data.ai_roots
+        };
+        choose_with_scripts(data, scripts, &self.mons[1], &self.mons[0], &mut self.rng)
+    }
+
     pub fn wild(data: &Data, player_mon: Mon, wild_mon: Mon, catch_rate: u16, seed: u32) -> Self {
         let p_name = player_mon.name.to_uppercase();
         let w_name = wild_mon.name.to_uppercase();
@@ -1055,6 +1090,7 @@ impl Battle {
             last_ai: None,
             log: vec![format!("Wild {w_name} appeared! Go, {p_name}!")],
             is_wild: true,
+            trainer: None,
             caught: false,
             fled: false,
             catch_rate,
@@ -1489,6 +1525,8 @@ impl Battle {
                 "You won!"
             } else if self.is_wild {
                 "Wild Pokémon won!"
+            } else if self.trainer.is_some() {
+                "The Trainer won!"
             } else {
                 "RIVAL won!"
             }
@@ -1563,7 +1601,7 @@ impl Battle {
         if self.winner.is_some() || self.mons[0].hp == 0 || self.mons[1].hp == 0 {
             return Ok(());
         }
-        let ai = choose(data, &self.mons[1], &self.mons[0], &mut self.rng)?;
+        let ai = self.opponent_move(data)?;
         let slot = ai.slot;
         self.last_ai = Some(ai);
         self.turn = (self.turn + 1).min(255);
@@ -1717,7 +1755,7 @@ impl Battle {
         if player_slot >= self.mons[0].moves.len() || self.mons[0].pp[player_slot] == 0 {
             return Err("That move has no PP".into());
         }
-        let ai = choose(data, &self.mons[1], &self.mons[0], &mut self.rng)?;
+        let ai = self.opponent_move(data)?;
         let slots = [player_slot, ai.slot];
         self.last_ai = Some(ai);
         self.turn = (self.turn + 1).min(255);

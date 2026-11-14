@@ -114,6 +114,7 @@ pub struct Vm {
     stack: Vec<u32>,
     pub fault: Option<String>,
     pub post_battle_pc: Option<u32>,
+    pub trainer_intro: Option<u32>,
     pub battle_mode: u8,
     pub battle_trainer: u16,
     pub battle_flags: u16,
@@ -128,6 +129,7 @@ impl Vm {
             stack: Vec::new(),
             fault: None,
             post_battle_pc: None,
+            trainer_intro: None,
             battle_mode: 0,
             battle_trainer: 0,
             battle_flags: 0,
@@ -757,6 +759,7 @@ impl Vm {
                 let trainer = self.half(data)?;
                 let flags = self.half(data)?;
                 self.battle_mode = mode;
+                self.trainer_intro = None;
                 match mode {
                     9 => {
                         let _defeat = self.word(data)?;
@@ -766,9 +769,18 @@ impl Vm {
                         self.post_battle_pc = self.pc;
                         self.pc = Some(data.label("EventScript_DoNoIntroTrainerBattle")?);
                     }
-                    0 | 4 => {
+                    0 => {
+                        self.trainer_intro = Some(self.word(data)?);
                         let _defeat = self.word(data)?;
-                        let _extra = if mode == 0 { self.word(data)? } else { 0 };
+                        self.battle_trainer = trainer;
+                        self.battle_flags = flags;
+                        self.post_battle_pc = self.pc;
+                        if !state.events.flag_get(0x500 + trainer) {
+                            self.pc = Some(data.label("EventScript_DoTrainerBattle")?);
+                        }
+                    }
+                    4 => {
+                        let _defeat = self.word(data)?;
                         self.battle_trainer = trainer;
                         self.battle_flags = flags;
                         self.post_battle_pc = self.pc;
